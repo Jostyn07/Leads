@@ -1,5 +1,5 @@
 import './globals.css';
-import Nav from '../components/ui/Nav';
+import Nav from '../components/ui/nav';
 
 export const metadata = {
   title: 'Plataforma de Leads',
