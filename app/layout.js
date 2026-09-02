@@ -1,5 +1,7 @@
 import './globals.css';
-import Nav from '../components/ui/nav';
+import Sidebar from '../components/ui/sidebar';
+import BackgroundPicker from '../components/ui/backgroundPicker';
+import AppShell from '../components/ui/appShell';
 
 export const metadata = {
   title: 'Plataforma de Leads',
@@ -10,8 +12,9 @@ export default function RootLayout({ children }) {
   return (
     <html lang="es">
       <body>
-        <Nav />
-        {children}
+        <BackgroundPicker />
+        <Sidebar />
+        <AppShell>{children}</AppShell>
       </body>
     </html>
   );

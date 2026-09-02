@@ -1,13 +1,18 @@
 :root {
-  --color-bg: #f5f6f8;
-  --color-surface: #ffffff;
-  --color-border: #e2e4e9;
-  --color-text: #1f2430;
-  --color-text-muted: #6b7280;
-  --color-primary: #2563eb;
-  --color-primary-hover: #1d4ed8;
-  --color-danger: #dc2626;
-  --radius: 8px;
+  /* Tema oscuro. Las superficies (tarjetas, sidebar) usan color translúcido
+     + backdrop-filter para distinguirse del fondo con imagen sin perder
+     coherencia visual (efecto "glass"). */
+  --color-bg: #0f1115;
+  --color-surface: rgba(30, 33, 40, 0.72);
+  --color-surface-solid: #1a1d24;
+  --color-border: rgba(255, 255, 255, 0.09);
+  --color-text: #e7e9ee;
+  --color-text-muted: #9aa1ad;
+  --color-primary: #6366f1;
+  --color-primary-hover: #4f52d6;
+  --color-danger: #f87171;
+  --radius: 10px;
+  --sidebar-width: 220px;
   --font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
 }
 
@@ -15,8 +20,12 @@
   box-sizing: border-box;
 }
 
-body {
+html, body {
   margin: 0;
+  min-height: 100%;
+}
+
+body {
   font-family: var(--font-family);
   background: var(--color-bg);
   color: var(--color-text);
@@ -32,6 +41,25 @@ button {
   cursor: pointer;
 }
 
+/* Capa de fondo fija (imagen + blur) — ver components/ui/backgroundPicker.js */
+.bg-layer {
+  position: fixed;
+  inset: 0;
+  z-index: -2;
+  background-size: cover;
+  background-position: center;
+  filter: blur(18px) brightness(0.55) saturate(1.1);
+  transform: scale(1.08); /* evita bordes nítidos visibles por el blur */
+  transition: background-image 0.3s ease;
+}
+
+.bg-overlay {
+  position: fixed;
+  inset: 0;
+  z-index: -1;
+  background: linear-gradient(180deg, rgba(15, 17, 21, 0.55), rgba(15, 17, 21, 0.85));
+}
+
 .btn {
   display: inline-flex;
   align-items: center;
@@ -41,6 +69,7 @@ button {
   border: 1px solid transparent;
   font-size: 0.9rem;
   font-weight: 500;
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .btn-primary {
@@ -53,9 +82,13 @@ button {
 }
 
 .btn-secondary {
-  background: var(--color-surface);
+  background: rgba(255, 255, 255, 0.06);
   border-color: var(--color-border);
   color: var(--color-text);
+}
+
+.btn-secondary:hover {
+  background: rgba(255, 255, 255, 0.1);
 }
 
 .card {
@@ -63,6 +96,9 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   padding: 1rem;
+  backdrop-filter: blur(16px);
+  -webkit-backdrop-filter: blur(16px);
+  box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
 }
 
 .input {
@@ -71,4 +107,39 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   font-size: 0.9rem;
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text);
+}
+
+.input::placeholder {
+  color: var(--color-text-muted);
+}
+
+.input:focus, select:focus {
+  outline: 2px solid var(--color-primary);
+  outline-offset: 1px;
+}
+
+select {
+  background: rgba(255, 255, 255, 0.05);
+  color: var(--color-text);
+  border: 1px solid var(--color-border);
+  border-radius: var(--radius);
+}
+
+select option {
+  background: var(--color-surface-solid);
+  color: var(--color-text);
+}
+
+/* Scrollbar discreto para las columnas de Embudos y Kanban */
+.scroll-x::-webkit-scrollbar,
+.scroll-y::-webkit-scrollbar {
+  width: 8px;
+  height: 8px;
+}
+.scroll-x::-webkit-scrollbar-thumb,
+.scroll-y::-webkit-scrollbar-thumb {
+  background: rgba(255, 255, 255, 0.15);
+  border-radius: 4px;
 }

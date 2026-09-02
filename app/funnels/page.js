@@ -2,10 +2,11 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase/client';
-import FunnelCard from '../../components/funnels/funnelCard';
+import FunnelColumn from '../../components/funnels/funnelColumn';
 
 export default function FunnelsPage() {
   const [funnels, setFunnels] = useState([]);
+  const [leadsByFunnel, setLeadsByFunnel] = useState({});
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -28,7 +29,7 @@ export default function FunnelsPage() {
 
     const { data: funnelsData, error } = await supabase
       .from('funnels')
-      .select('id, name, description, funnel_stages ( id )')
+      .select('id, name, description')
       .order('created_at', { ascending: true });
 
     if (error) {
@@ -37,19 +38,30 @@ export default function FunnelsPage() {
       return;
     }
 
-    // Conteo de leads por embudo (una consulta por embudo; el número de
-    // embudos es pequeño, así que esto es suficiente para el MVP).
-    const withCounts = await Promise.all(
-      (funnelsData ?? []).map(async (funnel) => {
-        const { count } = await supabase
-          .from('lead_funnel')
-          .select('lead_id', { count: 'exact', head: true })
-          .eq('funnel_id', funnel.id);
-        return { ...funnel, leadCount: count ?? 0 };
-      })
-    );
+    // Trae los leads activos de cada embudo (columna) en una sola consulta,
+    // agrupando en el cliente por funnel_id.
+    const { data: relData, error: relError } = await supabase
+      .from('lead_funnel')
+      .select('funnel_id, leads ( id, name, phone, status )');
 
-    setFunnels(withCounts);
+    if (relError) {
+      setErrorMsg(relError.message);
+      setLoading(false);
+      return;
+    }
+
+    const grouped = {};
+    (funnelsData ?? []).forEach((f) => {
+      grouped[f.id] = [];
+    });
+    (relData ?? []).forEach((rel) => {
+      if (rel.leads && rel.leads.status === 'active' && grouped[rel.funnel_id]) {
+        grouped[rel.funnel_id].push(rel.leads);
+      }
+    });
+
+    setFunnels(funnelsData ?? []);
+    setLeadsByFunnel(grouped);
     setLoading(false);
   }
 
@@ -98,8 +110,9 @@ export default function FunnelsPage() {
   }
 
   async function handleDelete(funnel) {
+    const count = leadsByFunnel[funnel.id]?.length ?? 0;
     const confirmed = window.confirm(
-      `¿Eliminar el embudo "${funnel.name}"? Los ${funnel.leadCount} leads asignados quedarán sin embudo. Esta acción no se puede deshacer.`
+      `¿Eliminar el embudo "${funnel.name}"? Los ${count} leads asignados quedarán sin embudo. Esta acción no se puede deshacer.`
     );
     if (!confirmed) return;
 
@@ -113,7 +126,7 @@ export default function FunnelsPage() {
   }
 
   return (
-    <main style={{ padding: '1.5rem', maxWidth: 860, margin: '0 auto' }}>
+    <main style={{ padding: '1.5rem' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
         <h1 style={{ fontSize: '1.25rem' }}>Embudos</h1>
         <button className="btn btn-primary" onClick={() => setShowCreateForm((v) => !v)}>
@@ -126,7 +139,7 @@ export default function FunnelsPage() {
       )}
 
       {showCreateForm && (
-        <form onSubmit={handleCreate} className="card" style={{ marginBottom: '1rem' }}>
+        <form onSubmit={handleCreate} className="card" style={{ marginBottom: '1rem', maxWidth: 360 }}>
           <label style={{ display: 'block', marginBottom: '0.75rem' }}>
             <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Nombre</span>
             <input
@@ -153,12 +166,15 @@ export default function FunnelsPage() {
 
       {loading ? (
         <p>Cargando…</p>
+      ) : funnels.length === 0 ? (
+        <p style={{ color: 'var(--color-text-muted)' }}>Aún no hay embudos creados.</p>
       ) : (
-        <div style={{ display: 'grid', gap: '0.75rem' }}>
+        <div className="scroll-x" style={{ display: 'flex', gap: '1rem', overflowX: 'auto', paddingBottom: '0.5rem' }}>
           {funnels.map((funnel) => (
-            <FunnelCard
+            <FunnelColumn
               key={funnel.id}
               funnel={funnel}
+              leads={leadsByFunnel[funnel.id] ?? []}
               editing={editingId === funnel.id}
               editState={{ name: editName, setName: setEditName, description: editDescription, setDescription: setEditDescription }}
               onStartEdit={() => startEdit(funnel)}
@@ -167,10 +183,6 @@ export default function FunnelsPage() {
               onDelete={() => handleDelete(funnel)}
             />
           ))}
-
-          {funnels.length === 0 && (
-            <p style={{ color: 'var(--color-text-muted)' }}>Aún no hay embudos creados.</p>
-          )}
         </div>
       )}
     </main>
