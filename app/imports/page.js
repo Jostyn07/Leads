@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { supabase } from '../../lib/supabase/client';
 import { readExcelFile } from '../../lib/excel/readExcel';
 import { validateLeadRows } from '../../lib/validations/leads';
+import ImportPreviewTable from '../../components/import/importPreviewTable';
 
 export default function ImportsPage() {
   const [fileName, setFileName] = useState(null);
@@ -77,32 +78,7 @@ export default function ImportsPage() {
             Inválidos: <strong>{preview.invalidCount}</strong>
           </p>
 
-          <div style={{ maxHeight: 280, overflow: 'auto', border: '1px solid var(--color-border)', borderRadius: 6 }}>
-            <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
-              <thead>
-                <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border)' }}>
-                  <th style={{ padding: '0.5rem' }}>Nombre</th>
-                  <th style={{ padding: '0.5rem' }}>Teléfono</th>
-                  <th style={{ padding: '0.5rem' }}>Dirección</th>
-                  <th style={{ padding: '0.5rem' }}>Correo</th>
-                  <th style={{ padding: '0.5rem' }}>Estado</th>
-                </tr>
-              </thead>
-              <tbody>
-                {preview.rows.slice(0, 50).map((row, i) => (
-                  <tr key={i} style={{ borderBottom: '1px solid var(--color-border)' }}>
-                    <td style={{ padding: '0.5rem' }}>{row.name || '—'}</td>
-                    <td style={{ padding: '0.5rem' }}>{row.phone || '—'}</td>
-                    <td style={{ padding: '0.5rem' }}>{row.address || '—'}</td>
-                    <td style={{ padding: '0.5rem' }}>{row.email || '—'}</td>
-                    <td style={{ padding: '0.5rem', color: row.valid ? 'inherit' : 'var(--color-danger)' }}>
-                      {row.valid ? 'Válido' : row.errors.join(', ')}
-                    </td>
-                  </tr>
-                ))}
-              </tbody>
-            </table>
-          </div>
+          <ImportPreviewTable rows={preview.rows} />
           {preview.total > 50 && (
             <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
               Mostrando los primeros 50 de {preview.total} registros.

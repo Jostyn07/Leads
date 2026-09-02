@@ -2,6 +2,7 @@
 
 import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase/client';
+import FunnelCard from '../../components/funnels/funnelCard';
 
 export default function FunnelsPage() {
   const [funnels, setFunnels] = useState([]);
@@ -155,62 +156,16 @@ export default function FunnelsPage() {
       ) : (
         <div style={{ display: 'grid', gap: '0.75rem' }}>
           {funnels.map((funnel) => (
-            <div key={funnel.id} className="card">
-              {editingId === funnel.id ? (
-                <div>
-                  <input
-                    className="input"
-                    value={editName}
-                    onChange={(e) => setEditName(e.target.value)}
-                    style={{ marginBottom: '0.5rem' }}
-                  />
-                  <input
-                    className="input"
-                    value={editDescription}
-                    onChange={(e) => setEditDescription(e.target.value)}
-                    placeholder="Descripción (opcional)"
-                    style={{ marginBottom: '0.75rem' }}
-                  />
-                  <div style={{ display: 'flex', gap: '0.5rem' }}>
-                    <button className="btn btn-primary" onClick={() => handleSaveEdit(funnel.id)}>
-                      Guardar
-                    </button>
-                    <button className="btn btn-secondary" onClick={() => setEditingId(null)}>
-                      Cancelar
-                    </button>
-                  </div>
-                </div>
-              ) : (
-                <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start' }}>
-                  <div>
-                    <h2 style={{ fontSize: '1.05rem', marginBottom: 2 }}>{funnel.name}</h2>
-                    {funnel.description && (
-                      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', marginBottom: 6 }}>
-                        {funnel.description}
-                      </p>
-                    )}
-                    <p style={{ fontSize: '0.85rem' }}>
-                      {funnel.leadCount} leads · {funnel.funnel_stages?.length ?? 0} etapas
-                    </p>
-                  </div>
-                  <div style={{ display: 'flex', gap: '0.5rem', flexShrink: 0 }}>
-                    <a href={`/funnels/${funnel.id}`} className="btn btn-secondary">
-                      Etapas
-                    </a>
-                    <button className="btn btn-secondary" onClick={() => startEdit(funnel)}>
-                      Editar
-                    </button>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ color: 'var(--color-danger)' }}
-                      onClick={() => handleDelete(funnel)}
-                    >
-                      Eliminar
-                    </button>
-                  </div>
-                </div>
-              )}
-            </div>
+            <FunnelCard
+              key={funnel.id}
+              funnel={funnel}
+              editing={editingId === funnel.id}
+              editState={{ name: editName, setName: setEditName, description: editDescription, setDescription: setEditDescription }}
+              onStartEdit={() => startEdit(funnel)}
+              onCancelEdit={() => setEditingId(null)}
+              onSaveEdit={() => handleSaveEdit(funnel.id)}
+              onDelete={() => handleDelete(funnel)}
+            />
           ))}
 
           {funnels.length === 0 && (

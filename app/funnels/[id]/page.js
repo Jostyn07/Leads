@@ -3,10 +3,9 @@
 import { useEffect, useState } from 'react';
 import { useParams } from 'next/navigation';
 import { supabase } from '../../../lib/supabase/client';
+import StageEditor, { stageColors } from '../../../components/funnels/stageEditor';
 
-const STAGE_COLORS = [
-  '#2563eb', '#16a34a', '#d97706', '#dc2626', '#7c3aed', '#0891b2', '#64748b',
-];
+const STAGE_COLORS = stageColors();
 
 export default function FunnelDetailPage() {
   const { id: funnelId } = useParams();
@@ -199,86 +198,20 @@ export default function FunnelDetailPage() {
 
         <div style={{ display: 'grid', gap: '0.5rem', marginBottom: '1rem' }}>
           {stages.map((stage, index) => (
-            <div
+            <StageEditor
               key={stage.id}
-              style={{
-                display: 'flex',
-                alignItems: 'center',
-                gap: '0.5rem',
-                padding: '0.5rem',
-                border: '1px solid var(--color-border)',
-                borderRadius: 6,
-              }}
-            >
-              {editingStageId === stage.id ? (
-                <>
-                  <input
-                    className="input"
-                    value={editStageName}
-                    onChange={(e) => setEditStageName(e.target.value)}
-                    style={{ flex: 1 }}
-                  />
-                  <select
-                    value={editStageColor}
-                    onChange={(e) => setEditStageColor(e.target.value)}
-                    style={{ padding: '0.4rem' }}
-                  >
-                    {STAGE_COLORS.map((c) => (
-                      <option key={c} value={c}>{c}</option>
-                    ))}
-                  </select>
-                  <button className="btn btn-primary" onClick={() => handleSaveStageEdit(stage.id)}>
-                    Guardar
-                  </button>
-                  <button className="btn btn-secondary" onClick={() => setEditingStageId(null)}>
-                    Cancelar
-                  </button>
-                </>
-              ) : (
-                <>
-                  <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ padding: '0.1rem 0.4rem', fontSize: '0.7rem' }}
-                      onClick={() => moveStage(index, -1)}
-                      disabled={index === 0}
-                      title="Subir"
-                    >
-                      ▲
-                    </button>
-                    <button
-                      className="btn btn-secondary"
-                      style={{ padding: '0.1rem 0.4rem', fontSize: '0.7rem' }}
-                      onClick={() => moveStage(index, 1)}
-                      disabled={index === stages.length - 1}
-                      title="Bajar"
-                    >
-                      ▼
-                    </button>
-                  </div>
-                  <span
-                    style={{
-                      width: 12,
-                      height: 12,
-                      borderRadius: '50%',
-                      background: stage.color || '#999',
-                      flexShrink: 0,
-                    }}
-                  />
-                  <span style={{ flex: 1 }}>{stage.name}</span>
-                  <button className="btn btn-secondary" onClick={() => startEditStage(stage)}>
-                    Editar
-                  </button>
-                  <button
-                    className="btn btn-secondary"
-                    style={{ color: 'var(--color-danger)' }}
-                    onClick={() => handleDeleteStage(stage)}
-                  >
-                    Eliminar
-                  </button>
-                </>
-              )}
-            </div>
+              stage={stage}
+              index={index}
+              total={stages.length}
+              editing={editingStageId === stage.id}
+              editState={{ name: editStageName, setName: setEditStageName, color: editStageColor, setColor: setEditStageColor }}
+              onStartEdit={() => startEditStage(stage)}
+              onCancelEdit={() => setEditingStageId(null)}
+              onSaveEdit={() => handleSaveStageEdit(stage.id)}
+              onDelete={() => handleDeleteStage(stage)}
+              onMoveUp={() => moveStage(index, -1)}
+              onMoveDown={() => moveStage(index, 1)}
+            />
           ))}
         </div>
 
