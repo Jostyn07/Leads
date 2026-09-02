@@ -29,7 +29,10 @@ export default function FunnelsPage() {
 
     const { data: funnelsData, error } = await supabase
       .from('funnels')
-      .select('id, name, description')
+      .select('id, name, description, is_protected, is_default_stage')
+      // Los embudos protegidos siempre primero, y "Sin contactar" primero de todos.
+      .order('is_default_stage', { ascending: false })
+      .order('is_protected', { ascending: false })
       .order('created_at', { ascending: true });
 
     if (error) {
@@ -38,8 +41,6 @@ export default function FunnelsPage() {
       return;
     }
 
-    // Trae los leads activos de cada embudo (columna) en una sola consulta,
-    // agrupando en el cliente por funnel_id.
     const { data: relData, error: relError } = await supabase
       .from('lead_funnel')
       .select('funnel_id, leads ( id, name, phone, status )');
@@ -119,9 +120,42 @@ export default function FunnelsPage() {
     setErrorMsg(null);
     const { error } = await supabase.from('funnels').delete().eq('id', funnel.id);
     if (error) {
+      // El trigger de la base de datos bloquea el borrado de embudos
+      // protegidos ("Sin contactar" / "Contactado") con este mensaje.
       setErrorMsg(error.message);
     } else {
       await loadFunnels();
+    }
+  }
+
+  // Arrastrar un lead de una columna a otra: mueve su embudo directamente
+  // (los embudos son el único nivel de estado, no hay etapas).
+  async function handleDropLead(leadId, newFunnelId) {
+    setLeadsByFunnel((prev) => {
+      const next = {};
+      let movedLead = null;
+      for (const [funnelId, leadsList] of Object.entries(prev)) {
+        next[funnelId] = leadsList.filter((l) => {
+          if (l.id === leadId) {
+            movedLead = l;
+            return false;
+          }
+          return true;
+        });
+      }
+      if (movedLead) {
+        next[newFunnelId] = [...(next[newFunnelId] ?? []), movedLead];
+      }
+      return next;
+    });
+
+    const { error } = await supabase
+      .from('lead_funnel')
+      .upsert({ lead_id: leadId, funnel_id: newFunnelId }, { onConflict: 'lead_id' });
+
+    if (error) {
+      setErrorMsg(error.message);
+      await loadFunnels(); // revertir al estado real si falló
     }
   }
 
@@ -133,6 +167,10 @@ export default function FunnelsPage() {
           {showCreateForm ? 'Cancelar' : '+ Crear embudo'}
         </button>
       </div>
+
+      <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+        Arrastra un lead entre columnas para cambiarlo de embudo.
+      </p>
 
       {errorMsg && (
         <p style={{ color: 'var(--color-danger)', marginBottom: '1rem' }}>{errorMsg}</p>
@@ -181,6 +219,7 @@ export default function FunnelsPage() {
               onCancelEdit={() => setEditingId(null)}
               onSaveEdit={() => handleSaveEdit(funnel.id)}
               onDelete={() => handleDelete(funnel)}
+              onDropLead={handleDropLead}
             />
           ))}
         </div>

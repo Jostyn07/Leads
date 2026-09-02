@@ -96,7 +96,7 @@ export default function DashboardPage() {
           <div style={{ display: 'grid', gap: '0.5rem' }}>
             {byFunnel.map((f) => (
               <div key={f.id} style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.9rem' }}>
-                <a href={`/funnels/${f.id}`}>{f.name}</a>
+                <a href="/funnels">{f.name}</a>
                 <span>{f.leadCount} leads</span>
               </div>
             ))}

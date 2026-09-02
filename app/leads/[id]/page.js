@@ -28,7 +28,7 @@ export default function LeadDetailPage() {
       .select(
         `
         id, name, phone, address, email, status,
-        lead_funnel ( funnel_id, stage_id, funnels ( name ), funnel_stages ( name ) )
+        lead_funnel ( funnel_id, funnels ( name ) )
       `
       )
       .eq('id', leadId)
@@ -103,9 +103,6 @@ export default function LeadDetailPage() {
       <div className="card" style={{ marginBottom: '1rem' }}>
         <p style={{ fontSize: '0.9rem', marginBottom: 4 }}>
           <strong>Embudo:</strong> {rel?.funnels?.name || 'Sin asignar'}
-        </p>
-        <p style={{ fontSize: '0.9rem', marginBottom: 4 }}>
-          <strong>Etapa:</strong> {rel?.funnel_stages?.name || '—'}
         </p>
         <p style={{ fontSize: '0.9rem' }}>
           <strong>Estado:</strong> {lead.status === 'archived' ? 'Archivado' : 'Activo'}
