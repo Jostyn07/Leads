@@ -3,9 +3,11 @@
 import { usePathname } from 'next/navigation';
 
 const LINKS = [
+  { href: '/dashboard', label: 'Dashboard' },
   { href: '/leads', label: 'Leads' },
   { href: '/funnels', label: 'Embudos' },
   { href: '/imports', label: 'Importar' },
+  { href: '/settings', label: 'Configuración' },
 ];
 
 export default function Nav() {
