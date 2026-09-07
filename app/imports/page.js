@@ -1,6 +1,6 @@
 'use client';
 
-import { useState } from 'react';
+import { useState, useEffect } from 'react';
 import { supabase } from '../../lib/supabase/client';
 import { readExcelFile } from '../../lib/excel/readExcel';
 import { validateLeadRows } from '../../lib/validations/leads';
@@ -22,6 +22,18 @@ function ImportsPageContent() {
   const [importing, setImporting] = useState(false);
   const [result, setResult] = useState(null);
   const [errorMsg, setErrorMsg] = useState(null);
+
+  const [users, setUsers] = useState([]);
+  const [selectedUserId, setSelectedUserId] = useState(''); // '' = quien importa (yo mismo)
+
+  useEffect(() => {
+    loadUsers();
+  }, []);
+
+  async function loadUsers() {
+    const { data } = await supabase.from('profiles').select('id, full_name').order('full_name');
+    setUsers(data ?? []);
+  }
 
   async function handleFileChange(e) {
     const file = e.target.files?.[0];
@@ -53,6 +65,7 @@ function ImportsPageContent() {
     const { data, error } = await supabase.rpc('import_leads', {
       p_rows: validRows,
       p_file_name: fileName,
+      p_owner_id: selectedUserId || null,
     });
 
     if (error) {
@@ -69,6 +82,21 @@ function ImportsPageContent() {
       <h1 style={{ fontSize: '1.25rem', marginBottom: '1rem' }}>Importar leads desde Excel</h1>
 
       <div className="card" style={{ marginBottom: '1rem' }}>
+        <label style={{ display: 'block', marginBottom: '0.75rem', maxWidth: 320 }}>
+          <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>
+            Importar para el usuario
+          </span>
+          <select
+            className="input"
+            value={selectedUserId}
+            onChange={(e) => setSelectedUserId(e.target.value)}
+          >
+            <option value="">Yo mismo</option>
+            {users.map((u) => (
+              <option key={u.id} value={u.id}>{u.full_name || u.id}</option>
+            ))}
+          </select>
+        </label>
         <input type="file" accept=".xlsx,.xls" onChange={handleFileChange} />
         <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginTop: '0.5rem' }}>
           Columnas esperadas: Nombre, Teléfono, Dirección (opcional), Correo electrónico (opcional).
@@ -82,6 +110,12 @@ function ImportsPageContent() {
       {preview && (
         <div className="card" style={{ marginBottom: '1rem' }}>
           <h2 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>Vista previa: {fileName}</h2>
+          <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+            Se importarán para:{' '}
+            <strong>
+              {selectedUserId ? users.find((u) => u.id === selectedUserId)?.full_name : 'ti mismo'}
+            </strong>
+          </p>
           <p style={{ marginBottom: '1rem' }}>
             Registros encontrados: <strong>{preview.total}</strong> ·{' '}
             Válidos: <strong>{preview.validCount}</strong> ·{' '}

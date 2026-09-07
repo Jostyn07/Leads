@@ -4,11 +4,12 @@ import { useState } from 'react';
 import Input from '../ui/input';
 import Button from '../ui/button';
 
-export default function LeadCreateForm({ onCreate, saving, errorMsg }) {
+export default function LeadCreateForm({ onCreate, saving, errorMsg, isAdmin, users = [] }) {
   const [name, setName] = useState('');
   const [phone, setPhone] = useState('');
   const [address, setAddress] = useState('');
   const [email, setEmail] = useState('');
+  const [ownerId, setOwnerId] = useState(''); // '' = yo mismo
 
   function handleSubmit(e) {
     e.preventDefault();
@@ -18,6 +19,7 @@ export default function LeadCreateForm({ onCreate, saving, errorMsg }) {
         phone: phone.trim(),
         address: address.trim() || null,
         email: email.trim() || null,
+        ...(isAdmin && ownerId ? { owner_id: ownerId } : {}),
       },
       () => {
         // limpia el formulario solo si la creación fue exitosa
@@ -25,6 +27,7 @@ export default function LeadCreateForm({ onCreate, saving, errorMsg }) {
         setPhone('');
         setAddress('');
         setEmail('');
+        setOwnerId('');
       }
     );
   }
@@ -32,6 +35,17 @@ export default function LeadCreateForm({ onCreate, saving, errorMsg }) {
   return (
     <form onSubmit={handleSubmit}>
       <div style={{ display: 'grid', gap: '0.75rem', marginBottom: '0.75rem' }}>
+        {isAdmin && (
+          <label style={{ display: 'block' }}>
+            <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Propietario</span>
+            <select className="input" value={ownerId} onChange={(e) => setOwnerId(e.target.value)}>
+              <option value="">Yo mismo</option>
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name || u.id}</option>
+              ))}
+            </select>
+          </label>
+        )}
         <Input label="Nombre" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
         <Input label="Teléfono" value={phone} onChange={(e) => setPhone(e.target.value)} required />
         <Input label="Dirección (opcional)" value={address} onChange={(e) => setAddress(e.target.value)} />

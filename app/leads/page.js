@@ -17,6 +17,8 @@ export default function LeadsPage() {
 
   const [funnels, setFunnels] = useState([]);
   const [filterFunnelId, setFilterFunnelId] = useState(''); // '' = todos, 'unassigned' = sin embudo, o id de embudo
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [users, setUsers] = useState([]);
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
   const [creating, setCreating] = useState(false);
@@ -25,7 +27,22 @@ export default function LeadsPage() {
   useEffect(() => {
     loadLeads();
     loadFunnels();
+    loadRole();
   }, []);
+
+  async function loadRole() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+    const admin = data?.role === 'admin';
+    setIsAdmin(admin);
+    if (admin) {
+      const { data: profiles } = await supabase.from('profiles').select('id, full_name').order('full_name');
+      setUsers(profiles ?? []);
+    }
+  }
 
   async function loadLeads() {
     setLoading(true);
@@ -114,7 +131,7 @@ export default function LeadsPage() {
         <h1 style={{ fontSize: '1.25rem' }}>Leads</h1>
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <a href="/funnels" className="btn btn-secondary">Ver embudos</a>
-          <Button onClick={() => setCreateModalOpen(true)}>+ Nuevo lead</Button>
+          {isAdmin && <Button onClick={() => setCreateModalOpen(true)}>+ Nuevo lead</Button>}
           <a href="/imports" className="btn btn-secondary">Importar Excel</a>
         </div>
       </div>
@@ -156,7 +173,7 @@ export default function LeadsPage() {
         )}
       </div>
 
-      <LeadBulkActions selectedIds={selectedIds} onDone={loadLeads} />
+      <LeadBulkActions selectedIds={selectedIds} onDone={loadLeads} isAdmin={isAdmin} />
 
       {loading ? (
         <p>Cargando…</p>
@@ -196,7 +213,7 @@ export default function LeadsPage() {
       )}
 
       <Modal open={createModalOpen} onClose={() => setCreateModalOpen(false)} title="Nuevo lead">
-        <LeadCreateForm onCreate={handleCreateLead} saving={creating} errorMsg={createError} />
+        <LeadCreateForm onCreate={handleCreateLead} saving={creating} errorMsg={createError} isAdmin={isAdmin} users={users} />
       </Modal>
     </main>
   );
