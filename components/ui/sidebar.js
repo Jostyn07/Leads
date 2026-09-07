@@ -9,8 +9,8 @@ const LINKS = [
   { href: '/dashboard', label: 'Dashboard', icon: '📊' },
   { href: '/leads', label: 'Leads', icon: '👥' },
   { href: '/funnels', label: 'Embudos', icon: '🔀' },
-  { href: '/imports', label: 'Importar', icon: '📥' },
-  { href: '/settings', label: 'Configuración', icon: '⚙️' },
+  { href: '/imports', label: 'Importar', icon: '📥', adminOnly: true },
+  { href: '/settings', label: 'Configuración', icon: '⚙️', adminOnly: true },
 ];
 
 export default function Sidebar() {
@@ -30,8 +30,8 @@ export default function Sidebar() {
     } = await supabase.auth.getUser();
     if (!user) return;
 
-    const { data } = await supabase.from('profiles').select('full_name').eq('id', user.id).single();
-    setProfile({ email: user.email, fullName: data?.full_name });
+    const { data } = await supabase.from('profiles').select('full_name, role').eq('id', user.id).single();
+    setProfile({ email: user.email, fullName: data?.full_name, role: data?.role || 'user' });
   }
 
   async function handleSignOut() {
@@ -65,7 +65,7 @@ export default function Sidebar() {
       </div>
 
       <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, padding: '0 0.6rem' }}>
-        {LINKS.map((link) => {
+        {LINKS.filter((link) => !link.adminOnly || profile?.role === 'admin').map((link) => {
           const active = pathname?.startsWith(link.href);
           return (
             <a
