@@ -15,9 +15,29 @@ export default function LeadDetailPage() {
   const [saving, setSaving] = useState(false);
   const [errorMsg, setErrorMsg] = useState(null);
 
+  const [isAdmin, setIsAdmin] = useState(false);
+  const [users, setUsers] = useState([]);
+  const [reassigning, setReassigning] = useState(false);
+
   useEffect(() => {
-    if (leadId) loadLead();
+    if (leadId) {
+      loadLead();
+      loadRole();
+    }
   }, [leadId]);
+
+  async function loadRole() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+    if (data?.role === 'admin') {
+      setIsAdmin(true);
+      const { data: profiles } = await supabase.from('profiles').select('id, full_name').order('full_name');
+      setUsers(profiles ?? []);
+    }
+  }
 
   async function loadLead() {
     setLoading(true);
@@ -27,8 +47,9 @@ export default function LeadDetailPage() {
       .from('leads')
       .select(
         `
-        id, name, phone, address, email, status,
-        lead_funnel ( funnel_id, funnels ( name ) )
+        id, name, phone, address, email, status, owner_id,
+        lead_funnel ( funnel_id, funnels ( name ) ),
+        owner:profiles!leads_owner_id_fkey ( full_name )
       `
       )
       .eq('id', leadId)
@@ -49,6 +70,20 @@ export default function LeadDetailPage() {
     const { error } = await supabase.from('leads').update(updates).eq('id', leadId);
 
     setSaving(false);
+    if (error) {
+      setErrorMsg(error.message);
+    } else {
+      await loadLead();
+    }
+  }
+
+  async function handleReassign(newOwnerId) {
+    setReassigning(true);
+    setErrorMsg(null);
+
+    const { error } = await supabase.from('leads').update({ owner_id: newOwnerId }).eq('id', leadId);
+
+    setReassigning(false);
     if (error) {
       setErrorMsg(error.message);
     } else {
@@ -88,6 +123,7 @@ export default function LeadDetailPage() {
   }
 
   const rel = Array.isArray(lead.lead_funnel) ? lead.lead_funnel[0] : lead.lead_funnel;
+  const owner = Array.isArray(lead.owner) ? lead.owner[0] : lead.owner;
 
   return (
     <main style={{ padding: '1.5rem', maxWidth: 560, margin: '0 auto' }}>
@@ -104,14 +140,62 @@ export default function LeadDetailPage() {
         <p style={{ fontSize: '0.9rem', marginBottom: 4 }}>
           <strong>Embudo:</strong> {rel?.funnels?.name || 'Sin asignar'}
         </p>
-        <p style={{ fontSize: '0.9rem' }}>
+        <p style={{ fontSize: '0.9rem', marginBottom: isAdmin ? 8 : 0 }}>
           <strong>Estado:</strong> {lead.status === 'archived' ? 'Archivado' : 'Activo'}
         </p>
+
+        {isAdmin ? (
+          <label style={{ display: 'block', marginTop: 8 }}>
+            <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>
+              <strong>Propietario</strong>
+            </span>
+            <select
+              className="input"
+              value={lead.owner_id || ''}
+              onChange={(e) => handleReassign(e.target.value)}
+              disabled={reassigning}
+            >
+              {users.map((u) => (
+                <option key={u.id} value={u.id}>{u.full_name || u.id}</option>
+              ))}
+            </select>
+          </label>
+        ) : (
+          owner?.full_name && (
+            <p style={{ fontSize: '0.9rem' }}>
+              <strong>Propietario:</strong> {owner.full_name}
+            </p>
+          )
+        )}
       </div>
 
       <div className="card" style={{ marginBottom: '1rem' }}>
         <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Información del contacto</h2>
-        <LeadDetailForm lead={lead} onSave={handleSave} saving={saving} />
+        {isAdmin ? (
+          <LeadDetailForm lead={lead} onSave={handleSave} saving={saving} />
+        ) : (
+          <div style={{ display: 'grid', gap: '0.6rem' }}>
+            <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: 4 }}>
+              Solo un administrador puede editar estos datos.
+            </p>
+            <div>
+              <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Nombre</span>
+              <span>{lead.name}</span>
+            </div>
+            <div>
+              <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Teléfono</span>
+              <span>{lead.phone}</span>
+            </div>
+            <div>
+              <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Dirección</span>
+              <span>{lead.address || '—'}</span>
+            </div>
+            <div>
+              <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Correo</span>
+              <span>{lead.email || '—'}</span>
+            </div>
+          </div>
+        )}
       </div>
 
       <div style={{ display: 'flex', gap: '0.5rem' }}>

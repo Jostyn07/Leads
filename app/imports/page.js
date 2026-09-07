@@ -5,8 +5,18 @@ import { supabase } from '../../lib/supabase/client';
 import { readExcelFile } from '../../lib/excel/readExcel';
 import { validateLeadRows } from '../../lib/validations/leads';
 import ImportPreviewTable from '../../components/import/importPreviewTable';
+import DeleteLeadsSection from '../../components/import/deleteLeadsSection';
+import RequireAdmin from '../../components/ui/requireAdmin';
 
 export default function ImportsPage() {
+  return (
+    <RequireAdmin>
+      <ImportsPageContent />
+    </RequireAdmin>
+  );
+}
+
+function ImportsPageContent() {
   const [fileName, setFileName] = useState(null);
   const [preview, setPreview] = useState(null); // { rows, total, validCount, invalidCount }
   const [importing, setImporting] = useState(false);
@@ -112,6 +122,8 @@ export default function ImportsPage() {
           </a>
         </div>
       )}
+
+      <DeleteLeadsSection />
     </main>
   );
 }

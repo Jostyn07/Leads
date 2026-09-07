@@ -3,6 +3,9 @@
 import { useState } from 'react';
 import { useRouter } from 'next/navigation';
 import { signInWithPassword } from '../../lib/supabase/auth';
+import { supabase } from '../../lib/supabase/client';
+
+const ROOT_DOMAIN = process.env.NEXT_PUBLIC_ROOT_DOMAIN;
 
 export default function LoginPage() {
   const router = useRouter();
@@ -16,7 +19,27 @@ export default function LoginPage() {
     setError(null);
     setLoading(true);
     try {
-      await signInWithPassword(email, password);
+      const { user } = await signInWithPassword(email, password);
+
+      // Si hay dominio configurado y el usuario tiene subdominio propio
+      // (y no es admin), lo mandamos directo a su subdominio.
+      if (ROOT_DOMAIN && user) {
+        const { data: profile } = await supabase
+          .from('profiles')
+          .select('role, subdomain')
+          .eq('id', user.id)
+          .single();
+
+        if (profile && profile.role !== 'admin' && profile.subdomain) {
+          const currentHost = window.location.hostname;
+          const expectedHost = `${profile.subdomain}.${ROOT_DOMAIN}`;
+          if (currentHost !== expectedHost) {
+            window.location.href = `https://${expectedHost}/leads`;
+            return;
+          }
+        }
+      }
+
       router.push('/leads');
     } catch (err) {
       setError(err.message || 'No se pudo iniciar sesión');
