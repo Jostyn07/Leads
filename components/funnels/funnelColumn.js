@@ -6,6 +6,9 @@ import Button from '../ui/button';
 export default function FunnelColumn({
   funnel,
   leads,
+  total,
+  loadingMore,
+  onLoadMore,
   editing,
   editState,
   onStartEdit,
@@ -78,7 +81,7 @@ export default function FunnelColumn({
               )}
             </h2>
             <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', flexShrink: 0 }}>
-              {leads.length}
+              {total}
             </span>
           </div>
           {funnel.description && (
@@ -135,8 +138,17 @@ export default function FunnelColumn({
             Arrastra un lead aquí.
           </p>
         )}
+        {leads.length < total && (
+          <button
+            className="btn btn-secondary"
+            onClick={onLoadMore}
+            disabled={loadingMore}
+            style={{ fontSize: '0.8rem', marginTop: '0.25rem' }}
+          >
+            {loadingMore ? 'Cargando…' : `Cargar más (${leads.length} de ${total})`}
+          </button>
+        )}
       </div>
     </div>
   );
 }
-

@@ -8,15 +8,23 @@ import LeadCreateForm from '../../components/leads/leadCreateForm';
 import Modal from '../../components/ui/modal';
 import Button from '../../components/ui/button';
 
+const PAGE_SIZE = 60;
+const SEARCH_DEBOUNCE_MS = 400;
+
 export default function LeadsPage() {
   const [leads, setLeads] = useState([]);
+  const [totalCount, setTotalCount] = useState(0);
+  const [page, setPage] = useState(1);
   const [loading, setLoading] = useState(true);
-  const [search, setSearch] = useState('');
   const [errorMsg, setErrorMsg] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
 
+  const [search, setSearch] = useState('');
+  const [debouncedSearch, setDebouncedSearch] = useState('');
+
   const [funnels, setFunnels] = useState([]);
   const [filterFunnelId, setFilterFunnelId] = useState(''); // '' = todos, 'unassigned' = sin embudo, o id de embudo
+
   const [isAdmin, setIsAdmin] = useState(false);
   const [users, setUsers] = useState([]);
 
@@ -24,8 +32,21 @@ export default function LeadsPage() {
   const [creating, setCreating] = useState(false);
   const [createError, setCreateError] = useState(null);
 
+  // Debounce de la búsqueda: espera a que la persona deje de escribir
+  // antes de consultar al servidor (evita una consulta por cada tecla).
   useEffect(() => {
-    loadLeads();
+    const timeout = setTimeout(() => {
+      setDebouncedSearch(search);
+      setPage(1);
+    }, SEARCH_DEBOUNCE_MS);
+    return () => clearTimeout(timeout);
+  }, [search]);
+
+  useEffect(() => {
+    loadLeads(page, debouncedSearch, filterFunnelId);
+  }, [page, debouncedSearch, filterFunnelId]);
+
+  useEffect(() => {
     loadFunnels();
     loadRole();
   }, []);
@@ -44,32 +65,6 @@ export default function LeadsPage() {
     }
   }
 
-  async function loadLeads() {
-    setLoading(true);
-    setErrorMsg(null);
-    setSelectedIds([]);
-
-    // Trae los leads junto con su embudo actual (si tienen). Los embudos
-    // son la única capa de estado — no hay etapas dentro de ellos.
-    const { data, error } = await supabase
-      .from('leads')
-      .select(
-        `
-        id, name, phone, address, email, status,
-        lead_funnel ( funnel_id, funnels ( name ) )
-      `
-      )
-      .eq('status', 'active')
-      .order('created_at', { ascending: false });
-
-    if (error) {
-      setErrorMsg(error.message);
-    } else {
-      setLeads(data ?? []);
-    }
-    setLoading(false);
-  }
-
   async function loadFunnels() {
     const { data } = await supabase
       .from('funnels')
@@ -79,6 +74,59 @@ export default function LeadsPage() {
     setFunnels(data ?? []);
   }
 
+  // Trae una página de leads directamente del servidor, con el filtro de
+  // búsqueda y de embudo ya aplicados en la consulta (no en el cliente) —
+  // así funciona igual de bien con 100 leads que con 50,000.
+  async function loadLeads(pageNum, searchTerm, funnelFilter) {
+    setLoading(true);
+    setErrorMsg(null);
+
+    const from = (pageNum - 1) * PAGE_SIZE;
+    const to = from + PAGE_SIZE - 1;
+
+    const specificFunnel = funnelFilter && funnelFilter !== 'unassigned';
+
+    let query = supabase
+      .from('leads')
+      .select(
+        specificFunnel
+          ? `id, name, phone, address, email, status,
+             lead_funnel!inner ( funnel_id, funnels ( name ) )`
+          : `id, name, phone, address, email, status,
+             lead_funnel ( funnel_id, funnels ( name ) )`,
+        { count: 'exact' }
+      )
+      .eq('status', 'active');
+
+    if (specificFunnel) {
+      query = query.eq('lead_funnel.funnel_id', funnelFilter);
+    } else if (funnelFilter === 'unassigned') {
+      query = query.is('lead_funnel.funnel_id', null);
+    }
+
+    if (searchTerm.trim()) {
+      const term = searchTerm.trim().replace(/[%,]/g, '');
+      query = query.or(`name.ilike.%${term}%,phone.ilike.%${term}%`);
+    }
+
+    query = query.order('created_at', { ascending: false }).range(from, to);
+
+    const { data, error, count } = await query;
+
+    if (error) {
+      setErrorMsg(error.message);
+    } else {
+      setLeads(data ?? []);
+      setTotalCount(count ?? 0);
+      setSelectedIds([]);
+    }
+    setLoading(false);
+  }
+
+  function refreshCurrentPage() {
+    loadLeads(page, debouncedSearch, filterFunnelId);
+  }
+
   function toggleSelect(leadId) {
     setSelectedIds((prev) =>
       prev.includes(leadId) ? prev.filter((id) => id !== leadId) : [...prev, leadId]
@@ -86,7 +134,7 @@ export default function LeadsPage() {
   }
 
   function toggleSelectAll() {
-    setSelectedIds((prev) => (prev.length === filtered.length ? [] : filtered.map((l) => l.id)));
+    setSelectedIds((prev) => (prev.length === leads.length ? [] : leads.map((l) => l.id)));
   }
 
   async function handleCreateLead(newLead, resetForm) {
@@ -97,33 +145,20 @@ export default function LeadsPage() {
 
     setCreating(false);
     if (error) {
-      // El teléfono es UNIQUE en la base de datos.
       if (error.code === '23505') {
         setCreateError('Ya existe un lead con ese teléfono.');
       } else {
         setCreateError(error.message);
       }
     } else {
-      // El nuevo lead cae automáticamente en "Sin contactar" gracias al
-      // trigger on_lead_created de schema.sql.
       resetForm();
       setCreateModalOpen(false);
-      await loadLeads();
+      setPage(1);
+      loadLeads(1, debouncedSearch, filterFunnelId);
     }
   }
 
-  const filtered = leads.filter((lead) => {
-    const term = search.trim().toLowerCase();
-    const matchesSearch =
-      !term || lead.name.toLowerCase().includes(term) || lead.phone.toLowerCase().includes(term);
-    if (!matchesSearch) return false;
-
-    const rel = Array.isArray(lead.lead_funnel) ? lead.lead_funnel[0] : lead.lead_funnel;
-
-    if (filterFunnelId === 'unassigned') return !rel;
-    if (filterFunnelId) return rel?.funnel_id === filterFunnelId;
-    return true;
-  });
+  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
 
   return (
     <main style={{ padding: '1.5rem', maxWidth: 1300, margin: '0 auto' }}>
@@ -152,7 +187,10 @@ export default function LeadsPage() {
           className="input"
           style={{ maxWidth: 200 }}
           value={filterFunnelId}
-          onChange={(e) => setFilterFunnelId(e.target.value)}
+          onChange={(e) => {
+            setFilterFunnelId(e.target.value);
+            setPage(1);
+          }}
         >
           <option value="">Todos los embudos</option>
           <option value="unassigned">Sin embudo</option>
@@ -165,7 +203,9 @@ export default function LeadsPage() {
             className="btn btn-secondary"
             onClick={() => {
               setSearch('');
+              setDebouncedSearch('');
               setFilterFunnelId('');
+              setPage(1);
             }}
           >
             Limpiar filtros
@@ -173,21 +213,35 @@ export default function LeadsPage() {
         )}
       </div>
 
-      <LeadBulkActions selectedIds={selectedIds} onDone={loadLeads} isAdmin={isAdmin} />
+      <LeadBulkActions selectedIds={selectedIds} onDone={refreshCurrentPage} isAdmin={isAdmin} />
 
       {loading ? (
         <p>Cargando…</p>
       ) : (
         <>
-          {filtered.length > 0 && (
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginBottom: '0.75rem',
+              flexWrap: 'wrap',
+              gap: '0.5rem',
+            }}
+          >
             <button
               className="btn btn-secondary"
               onClick={toggleSelectAll}
-              style={{ marginBottom: '0.75rem', fontSize: '0.85rem' }}
+              style={{ fontSize: '0.85rem' }}
+              disabled={leads.length === 0}
             >
-              {selectedIds.length === filtered.length ? 'Deseleccionar todos' : 'Seleccionar todos'}
+              {selectedIds.length === leads.length && leads.length > 0 ? 'Deseleccionar todos' : 'Seleccionar todos (esta página)'}
             </button>
-          )}
+            <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+              {totalCount} resultado{totalCount === 1 ? '' : 's'}
+            </span>
+          </div>
+
           <div
             style={{
               display: 'grid',
@@ -195,7 +249,7 @@ export default function LeadsPage() {
               gap: '0.85rem',
             }}
           >
-            {filtered.map((lead) => (
+            {leads.map((lead) => (
               <LeadCard
                 key={lead.id}
                 lead={lead}
@@ -204,16 +258,45 @@ export default function LeadsPage() {
               />
             ))}
           </div>
-          {filtered.length === 0 && (
+
+          {leads.length === 0 && (
             <p style={{ padding: '1rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
               No hay leads que coincidan con la búsqueda o los filtros.
             </p>
+          )}
+
+          {totalPages > 1 && (
+            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1.5rem' }}>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setPage((p) => Math.max(1, p - 1))}
+                disabled={page === 1}
+              >
+                ← Anterior
+              </button>
+              <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                Página {page} de {totalPages}
+              </span>
+              <button
+                className="btn btn-secondary"
+                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
+                disabled={page === totalPages}
+              >
+                Siguiente →
+              </button>
+            </div>
           )}
         </>
       )}
 
       <Modal open={createModalOpen} onClose={() => setCreateModalOpen(false)} title="Nuevo lead">
-        <LeadCreateForm onCreate={handleCreateLead} saving={creating} errorMsg={createError} isAdmin={isAdmin} users={users} />
+        <LeadCreateForm
+          onCreate={handleCreateLead}
+          saving={creating}
+          errorMsg={createError}
+          isAdmin={isAdmin}
+          users={users}
+        />
       </Modal>
     </main>
   );
