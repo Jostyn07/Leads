@@ -27,7 +27,8 @@ function ImportsPageContent() {
   const [selectedUserId, setSelectedUserId] = useState(''); // '' = quien importa (yo mismo)
   const [progress, setProgress] = useState(null); // { done, totalBatches }
 
-  const BATCH_SIZE = 500;
+  const BATCH_SIZE = 150;
+  const MAX_RETRIES = 6;
 
   useEffect(() => {
     loadUsers();
@@ -74,33 +75,54 @@ function ImportsPageContent() {
     }
 
     const accumulated = { total: 0, inserted: 0, duplicated: 0, invalid: preview.invalidCount };
+    const failedBatches = [];
 
     for (let i = 0; i < batches.length; i++) {
       setProgress({ done: i, totalBatches: batches.length });
 
-      const { data, error } = await supabase.rpc('import_leads', {
-        p_rows: batches[i],
-        p_file_name: fileName,
-        p_owner_id: selectedUserId || null,
-      });
+      let lastError = null;
+      let succeeded = false;
 
-      if (error) {
-        setErrorMsg(
-          `Falló en el lote ${i + 1} de ${batches.length}: ${error.message}. ` +
-            `Ya se importaron ${accumulated.inserted} leads de los lotes anteriores.`
-        );
-        setImporting(false);
-        setProgress(null);
-        return;
+      for (let attempt = 1; attempt <= MAX_RETRIES && !succeeded; attempt++) {
+        try {
+          const { data, error } = await supabase.rpc('import_leads', {
+            p_rows: batches[i],
+            p_file_name: fileName,
+            p_owner_id: selectedUserId || null,
+          });
+
+          if (!error) {
+            accumulated.total += data.total;
+            accumulated.inserted += data.inserted;
+            accumulated.duplicated += data.duplicated;
+            succeeded = true;
+          } else {
+            lastError = error;
+          }
+        } catch (err) {
+          // Errores de red genuinos (conexión caída, etc.) llegan aquí en
+          // vez de como { error }; se tratan igual, con reintento.
+          lastError = err;
+        }
+
+        if (!succeeded && attempt < MAX_RETRIES) {
+          // Espera creciente entre intentos (1s, 2s, 3s...) — le da
+          // tiempo a que un problema pasajero del servidor se resuelva.
+          await new Promise((resolve) => setTimeout(resolve, 1000 * attempt));
+        }
       }
 
-      accumulated.total += data.total;
-      accumulated.inserted += data.inserted;
-      accumulated.duplicated += data.duplicated;
+      if (!succeeded) {
+        failedBatches.push({ index: i + 1, error: lastError?.message ?? 'error desconocido' });
+      }
+
+      // Pequeña pausa entre lotes (incluso los que sí funcionaron) para
+      // no saturar la API con peticiones seguidas una tras otra.
+      await new Promise((resolve) => setTimeout(resolve, 300));
     }
 
     setProgress(null);
-    setResult(accumulated);
+    setResult({ ...accumulated, failedBatches });
     setPreview(null);
     setImporting(false);
   }
@@ -183,6 +205,24 @@ function ImportsPageContent() {
           <p>Nuevos insertados: {result.inserted}</p>
           <p>Ya existentes (duplicados por teléfono): {result.duplicated}</p>
           <p>Inválidos: {result.invalid}</p>
+
+          {result.failedBatches && result.failedBatches.length > 0 && (
+            <div style={{ marginTop: '1rem', padding: '0.75rem', border: '1px solid var(--color-danger)', borderRadius: 8 }}>
+              <p style={{ color: 'var(--color-danger)', fontWeight: 500, marginBottom: 4 }}>
+                {result.failedBatches.length} lote(s) no se pudieron importar después de varios intentos:
+              </p>
+              <ul style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem', paddingLeft: '1.2rem' }}>
+                {result.failedBatches.map((b) => (
+                  <li key={b.index}>Lote {b.index}: {b.error}</li>
+                ))}
+              </ul>
+              <p style={{ fontSize: '0.85rem' }}>
+                Vuelve a subir el mismo archivo Excel completo — los que ya se importaron se
+                detectan como duplicados por teléfono y se saltan solos, sin riesgo de duplicarlos.
+              </p>
+            </div>
+          )}
+
           <a href="/leads" className="btn btn-primary" style={{ marginTop: '1rem', display: 'inline-flex' }}>
             Ver leads
           </a>
