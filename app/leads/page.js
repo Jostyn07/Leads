@@ -132,7 +132,7 @@ export default function LeadsPage() {
         <div style={{ display: 'flex', gap: '0.5rem' }}>
           <a href="/funnels" className="btn btn-secondary">Ver embudos</a>
           {isAdmin && <Button onClick={() => setCreateModalOpen(true)}>+ Nuevo lead</Button>}
-          <a href="/imports" className="btn btn-secondary">Importar Excel</a>
+          {isAdmin && <a href="/imports" className="btn btn-secondary">Importar Excel</a>}
         </div>
       </div>
 

@@ -25,6 +25,9 @@ function ImportsPageContent() {
 
   const [users, setUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(''); // '' = quien importa (yo mismo)
+  const [progress, setProgress] = useState(null); // { done, totalBatches }
+
+  const BATCH_SIZE = 500;
 
   useEffect(() => {
     loadUsers();
@@ -62,18 +65,43 @@ function ImportsPageContent() {
       .filter((r) => r.valid)
       .map((r) => ({ name: r.name, phone: r.phone, address: r.address, email: r.email }));
 
-    const { data, error } = await supabase.rpc('import_leads', {
-      p_rows: validRows,
-      p_file_name: fileName,
-      p_owner_id: selectedUserId || null,
-    });
-
-    if (error) {
-      setErrorMsg(error.message);
-    } else {
-      setResult(data);
-      setPreview(null);
+    // Con archivos grandes, se manda en lotes: una sola llamada con miles
+    // de filas puede exceder el límite de tamaño de la API o cortarse a
+    // medio camino (eso produce el error "Empty or invalid json").
+    const batches = [];
+    for (let i = 0; i < validRows.length; i += BATCH_SIZE) {
+      batches.push(validRows.slice(i, i + BATCH_SIZE));
     }
+
+    const accumulated = { total: 0, inserted: 0, duplicated: 0, invalid: preview.invalidCount };
+
+    for (let i = 0; i < batches.length; i++) {
+      setProgress({ done: i, totalBatches: batches.length });
+
+      const { data, error } = await supabase.rpc('import_leads', {
+        p_rows: batches[i],
+        p_file_name: fileName,
+        p_owner_id: selectedUserId || null,
+      });
+
+      if (error) {
+        setErrorMsg(
+          `Falló en el lote ${i + 1} de ${batches.length}: ${error.message}. ` +
+            `Ya se importaron ${accumulated.inserted} leads de los lotes anteriores.`
+        );
+        setImporting(false);
+        setProgress(null);
+        return;
+      }
+
+      accumulated.total += data.total;
+      accumulated.inserted += data.inserted;
+      accumulated.duplicated += data.duplicated;
+    }
+
+    setProgress(null);
+    setResult(accumulated);
+    setPreview(null);
     setImporting(false);
   }
 
@@ -138,7 +166,11 @@ function ImportsPageContent() {
               onClick={handleConfirmImport}
               disabled={importing || preview.validCount === 0}
             >
-              {importing ? 'Importando…' : `Importar ${preview.validCount} válidos`}
+              {importing
+                ? progress
+                  ? `Importando lote ${progress.done + 1} de ${progress.totalBatches}…`
+                  : 'Importando…'
+                : `Importar ${preview.validCount} válidos`}
             </button>
           </div>
         </div>
