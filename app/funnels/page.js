@@ -4,9 +4,12 @@ import { useEffect, useState } from 'react';
 import { supabase } from '../../lib/supabase/client';
 import FunnelColumn from '../../components/funnels/funnelColumn';
 
+const FUNNEL_PAGE_SIZE = 50;
+
 export default function FunnelsPage() {
   const [funnels, setFunnels] = useState([]);
-  const [leadsByFunnel, setLeadsByFunnel] = useState({});
+  // { [funnelId]: { leads: [...], total: number, loadingMore: bool } }
+  const [funnelLeads, setFunnelLeads] = useState({});
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -30,7 +33,6 @@ export default function FunnelsPage() {
     const { data: funnelsData, error } = await supabase
       .from('funnels')
       .select('id, name, description, is_protected, is_default_stage')
-      // Los embudos protegidos siempre primero, y "Sin contactar" primero de todos.
       .order('is_default_stage', { ascending: false })
       .order('is_protected', { ascending: false })
       .order('created_at', { ascending: true });
@@ -41,29 +43,65 @@ export default function FunnelsPage() {
       return;
     }
 
-    const { data: relData, error: relError } = await supabase
-      .from('lead_funnel')
-      .select('funnel_id, leads ( id, name, phone, status )');
+    setFunnels(funnelsData ?? []);
 
-    if (relError) {
-      setErrorMsg(relError.message);
-      setLoading(false);
-      return;
-    }
+    // Trae la primera página de leads de cada embudo, todas en paralelo.
+    const results = await Promise.all(
+      (funnelsData ?? []).map((f) => fetchFunnelLeads(f.id, 0, FUNNEL_PAGE_SIZE))
+    );
 
     const grouped = {};
-    (funnelsData ?? []).forEach((f) => {
-      grouped[f.id] = [];
+    (funnelsData ?? []).forEach((f, i) => {
+      grouped[f.id] = { leads: results[i].leads, total: results[i].total, loadingMore: false };
     });
-    (relData ?? []).forEach((rel) => {
-      if (rel.leads && rel.leads.status === 'active' && grouped[rel.funnel_id]) {
-        grouped[rel.funnel_id].push(rel.leads);
-      }
-    });
-
-    setFunnels(funnelsData ?? []);
-    setLeadsByFunnel(grouped);
+    setFunnelLeads(grouped);
     setLoading(false);
+  }
+
+  // Trae leads de UN embudo específico, en el rango [from, from+size).
+  async function fetchFunnelLeads(funnelId, from, size) {
+    const { data, error, count } = await supabase
+      .from('lead_funnel')
+      .select('leads!inner ( id, name, phone, status )', { count: 'exact' })
+      .eq('funnel_id', funnelId)
+      .eq('leads.status', 'active')
+      .range(from, from + size - 1);
+
+    if (error) {
+      return { leads: [], total: 0, error };
+    }
+    return { leads: (data ?? []).map((row) => row.leads), total: count ?? 0 };
+  }
+
+  async function handleLoadMore(funnelId) {
+    setFunnelLeads((prev) => ({
+      ...prev,
+      [funnelId]: { ...prev[funnelId], loadingMore: true },
+    }));
+
+    const current = funnelLeads[funnelId];
+    const result = await fetchFunnelLeads(funnelId, current.leads.length, FUNNEL_PAGE_SIZE);
+
+    setFunnelLeads((prev) => ({
+      ...prev,
+      [funnelId]: {
+        leads: [...prev[funnelId].leads, ...result.leads],
+        total: result.total,
+        loadingMore: false,
+      },
+    }));
+  }
+
+  // Refresca (desde el inicio) los leads visibles de un embudo específico
+  // — se usa tras mover un lead, sin tocar el "cargar más" de las demás
+  // columnas.
+  async function refreshFunnelColumn(funnelId) {
+    const currentlyLoaded = funnelLeads[funnelId]?.leads.length || FUNNEL_PAGE_SIZE;
+    const result = await fetchFunnelLeads(funnelId, 0, Math.max(currentlyLoaded, FUNNEL_PAGE_SIZE));
+    setFunnelLeads((prev) => ({
+      ...prev,
+      [funnelId]: { leads: result.leads, total: result.total, loadingMore: false },
+    }));
   }
 
   async function handleCreate(e) {
@@ -111,7 +149,7 @@ export default function FunnelsPage() {
   }
 
   async function handleDelete(funnel) {
-    const count = leadsByFunnel[funnel.id]?.length ?? 0;
+    const count = funnelLeads[funnel.id]?.total ?? 0;
     const confirmed = window.confirm(
       `¿Eliminar el embudo "${funnel.name}"? Los ${count} leads asignados quedarán sin embudo. Esta acción no se puede deshacer.`
     );
@@ -120,8 +158,6 @@ export default function FunnelsPage() {
     setErrorMsg(null);
     const { error } = await supabase.from('funnels').delete().eq('id', funnel.id);
     if (error) {
-      // El trigger de la base de datos bloquea el borrado de embudos
-      // protegidos ("Sin contactar" / "Contactado") con este mensaje.
       setErrorMsg(error.message);
     } else {
       await loadFunnels();
@@ -129,25 +165,13 @@ export default function FunnelsPage() {
   }
 
   // Arrastrar un lead de una columna a otra: mueve su embudo directamente
-  // (los embudos son el único nivel de estado, no hay etapas).
+  // (los embudos son el único nivel de estado, no hay etapas). Refresca
+  // solo las dos columnas afectadas.
   async function handleDropLead(leadId, newFunnelId) {
-    setLeadsByFunnel((prev) => {
-      const next = {};
-      let movedLead = null;
-      for (const [funnelId, leadsList] of Object.entries(prev)) {
-        next[funnelId] = leadsList.filter((l) => {
-          if (l.id === leadId) {
-            movedLead = l;
-            return false;
-          }
-          return true;
-        });
-      }
-      if (movedLead) {
-        next[newFunnelId] = [...(next[newFunnelId] ?? []), movedLead];
-      }
-      return next;
-    });
+    // Encuentra en qué columna está ahora mismo (para saber cuál refrescar).
+    const sourceFunnelId = Object.keys(funnelLeads).find((fid) =>
+      funnelLeads[fid].leads.some((l) => l.id === leadId)
+    );
 
     const { error } = await supabase
       .from('lead_funnel')
@@ -155,8 +179,13 @@ export default function FunnelsPage() {
 
     if (error) {
       setErrorMsg(error.message);
-      await loadFunnels(); // revertir al estado real si falló
+      return;
     }
+
+    if (sourceFunnelId && sourceFunnelId !== newFunnelId) {
+      await refreshFunnelColumn(sourceFunnelId);
+    }
+    await refreshFunnelColumn(newFunnelId);
   }
 
   return (
@@ -212,7 +241,10 @@ export default function FunnelsPage() {
             <FunnelColumn
               key={funnel.id}
               funnel={funnel}
-              leads={leadsByFunnel[funnel.id] ?? []}
+              leads={funnelLeads[funnel.id]?.leads ?? []}
+              total={funnelLeads[funnel.id]?.total ?? 0}
+              loadingMore={funnelLeads[funnel.id]?.loadingMore ?? false}
+              onLoadMore={() => handleLoadMore(funnel.id)}
               editing={editingId === funnel.id}
               editState={{ name: editName, setName: setEditName, description: editDescription, setDescription: setEditDescription }}
               onStartEdit={() => startEdit(funnel)}
