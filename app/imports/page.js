@@ -6,6 +6,7 @@ import { readExcelFile } from '../../lib/excel/readExcel';
 import { validateLeadRows } from '../../lib/validations/leads';
 import ImportPreviewTable from '../../components/import/importPreviewTable';
 import DeleteLeadsSection from '../../components/import/deleteLeadsSection';
+import ExportLeadsSection from '../../components/import/exportLeadsSection';
 import RequireAdmin from '../../components/ui/requireAdmin';
 
 export default function ImportsPage() {
@@ -229,6 +230,7 @@ function ImportsPageContent() {
         </div>
       )}
 
+      <ExportLeadsSection />
       <DeleteLeadsSection />
     </main>
   );
