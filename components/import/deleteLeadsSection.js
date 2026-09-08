@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import { supabase } from '../../lib/supabase/client';
 import { readExcelFile } from '../../lib/excel/readExcel';
+import { normalizePhone } from '../../lib/validations/leads';
 import Button from '../ui/button';
 
 export default function DeleteLeadsSection() {
@@ -24,7 +25,12 @@ export default function DeleteLeadsSection() {
 
     try {
       const { rows } = await readExcelFile(file);
-      const uniquePhones = [...new Set(rows.map((r) => (r.phone || '').toString().trim()).filter(Boolean))];
+      // Normaliza igual que al importar: si no se hiciera, un +1 en el
+      // Excel de borrado no coincidiría con el teléfono guardado (ya
+      // normalizado a 10 dígitos) y no se encontraría el lead a borrar.
+      const uniquePhones = [...new Set(
+        rows.map((r) => normalizePhone(r.phone)).filter((p) => p.length === 10)
+      )];
       setPhones(uniquePhones);
     } catch (err) {
       setErrorMsg('No se pudo leer el archivo: ' + err.message);

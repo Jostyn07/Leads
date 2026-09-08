@@ -3,6 +3,7 @@ import Sidebar from '../components/ui/sidebar';
 import BackgroundPicker from '../components/ui/backgroundPicker';
 import AppShell from '../components/ui/appShell';
 import SubdomainGuard from '../components/ui/subdomainGuard';
+import AuthWatcher from '../components/ui/authWatcher';
 
 export const metadata = {
   title: 'Plataforma de Leads',
@@ -13,6 +14,7 @@ export default function RootLayout({ children }) {
   return (
     <html lang="es">
       <body>
+        <AuthWatcher />
         <SubdomainGuard />
         <BackgroundPicker />
         <Sidebar />

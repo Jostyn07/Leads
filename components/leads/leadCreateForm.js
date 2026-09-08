@@ -3,6 +3,7 @@
 import { useState } from 'react';
 import Input from '../ui/input';
 import Button from '../ui/button';
+import { normalizePhone } from '../../lib/validations/leads';
 
 export default function LeadCreateForm({ onCreate, saving, errorMsg, isAdmin, users = [] }) {
   const [name, setName] = useState('');
@@ -10,13 +11,22 @@ export default function LeadCreateForm({ onCreate, saving, errorMsg, isAdmin, us
   const [address, setAddress] = useState('');
   const [email, setEmail] = useState('');
   const [ownerId, setOwnerId] = useState(''); // '' = yo mismo
+  const [phoneError, setPhoneError] = useState(null);
 
   function handleSubmit(e) {
     e.preventDefault();
+
+    const normalizedPhone = normalizePhone(phone);
+    if (normalizedPhone.length !== 10) {
+      setPhoneError('El teléfono debe tener 10 dígitos (sin contar el +1)');
+      return;
+    }
+    setPhoneError(null);
+
     onCreate(
       {
         name: name.trim(),
-        phone: phone.trim(),
+        phone: normalizedPhone,
         address: address.trim() || null,
         email: email.trim() || null,
         ...(isAdmin && ownerId ? { owner_id: ownerId } : {}),
@@ -47,7 +57,12 @@ export default function LeadCreateForm({ onCreate, saving, errorMsg, isAdmin, us
           </label>
         )}
         <Input label="Nombre" value={name} onChange={(e) => setName(e.target.value)} required autoFocus />
-        <Input label="Teléfono" value={phone} onChange={(e) => setPhone(e.target.value)} required />
+        <div>
+          <Input label="Teléfono" value={phone} onChange={(e) => setPhone(e.target.value)} required />
+          {phoneError && (
+            <p style={{ color: 'var(--color-danger)', fontSize: '0.8rem', marginTop: 4 }}>{phoneError}</p>
+          )}
+        </div>
         <Input label="Dirección (opcional)" value={address} onChange={(e) => setAddress(e.target.value)} />
         <Input
           label="Correo electrónico (opcional)"
