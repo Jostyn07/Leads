@@ -4,6 +4,7 @@ import { useEffect, useState } from 'react';
 import { usePathname, useRouter } from 'next/navigation';
 import { supabase } from '../../lib/supabase/client';
 import { signOut } from '../../lib/supabase/auth';
+import ThemeToggle from './themeToggle';
 
 const LINKS = [
   { href: '/dashboard', label: 'Dashboard', icon: '📊' },
@@ -53,15 +54,23 @@ export default function Sidebar() {
         width: 'var(--sidebar-width)',
         display: 'flex',
         flexDirection: 'column',
-        background: 'var(--color-surface)',
+        background: 'var(--color-sidebar-bg)',
         borderRight: '1px solid var(--color-border)',
         backdropFilter: 'blur(16px)',
         WebkitBackdropFilter: 'blur(16px)',
         zIndex: 30,
       }}
     >
-      <div style={{ padding: '1.25rem 1rem', fontWeight: 700, fontSize: '1.05rem' }}>
-        Leads
+      <div
+        style={{
+          padding: '1.1rem 1rem',
+          display: 'flex',
+          alignItems: 'center',
+          justifyContent: 'space-between',
+        }}
+      >
+        <span style={{ fontWeight: 700, fontSize: '1.05rem' }}>Leads</span>
+        <ThemeToggle />
       </div>
 
       <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, padding: '0 0.6rem' }}>
@@ -80,8 +89,8 @@ export default function Sidebar() {
                 borderRadius: 'var(--radius)',
                 fontSize: '0.9rem',
                 fontWeight: active ? 600 : 400,
-                background: active ? 'rgba(99, 102, 241, 0.18)' : 'transparent',
-                color: active ? '#8b8df7' : 'var(--color-text)',
+                background: active ? 'var(--color-active-bg)' : 'transparent',
+                color: active ? 'var(--color-active-text)' : 'var(--color-text)',
                 boxShadow: active ? 'inset 3px 0 0 var(--color-primary)' : 'none',
               }}
             >
@@ -134,6 +143,7 @@ export default function Sidebar() {
               justifyContent: 'center',
               fontSize: '0.8rem',
               flexShrink: 0,
+              color: '#fff',
             }}
           >
             {displayName.charAt(0).toUpperCase()}

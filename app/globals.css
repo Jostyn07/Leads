@@ -1,6 +1,9 @@
 :root {
-  /* Paleta actualizada — fondo más discreto y tarjetas más definidas
-     para que los leads sean el centro de atención, no el fondo. */
+  /* ============================================================
+     TEMA OSCURO (por defecto — sin atributo data-theme, o
+     data-theme="dark"). El tema claro sobreescribe estas mismas
+     variables más abajo en [data-theme="light"].
+     ============================================================ */
   --color-bg: #0b0e14;
   --color-sidebar-bg: rgba(16, 20, 29, 0.85);
   --color-surface: rgba(21, 25, 34, 0.78);
@@ -11,18 +14,89 @@
   --color-text: #f1f3f7;
   --color-text-muted: #a3aab6;
   --color-text-tertiary: #737b88;
+
   --color-primary: #6366f1;
   --color-primary-hover: #5457e5;
   --color-primary-soft: rgba(99, 102, 241, 0.14);
+
   --color-danger: #f87171;
   --color-whatsapp: #22c55e;
+  --color-whatsapp-bg: transparent;
+  --color-whatsapp-bg-hover: transparent;
+
   --color-status-default: #fbbf24;   /* "Sin contactar" (is_default_stage) */
   --color-status-protected: #60a5fa; /* "Contactado" (is_protected) */
   --color-status-custom: #4ade80;    /* embudos personalizados */
   --color-status-none: #737b88;      /* sin embudo asignado */
+
+  /* Superficies interactivas que antes eran rgba(255,255,255,X) fijos
+     — ahora son variables para poder invertirlas en tema claro */
+  --color-input-bg: rgba(255, 255, 255, 0.05);
+  --color-btn-secondary-bg: rgba(255, 255, 255, 0.06);
+  --color-btn-secondary-bg-hover: rgba(255, 255, 255, 0.1);
+  --color-lead-hover-border: rgba(255, 255, 255, 0.16);
+  --color-scrollbar-thumb: rgba(255, 255, 255, 0.15);
+  --color-focus-border: var(--color-primary);
+  --color-focus-shadow: rgba(99, 102, 241, 0.35);
+  --color-active-bg: rgba(99, 102, 241, 0.18);
+  --color-active-text: #8b8df7;
+
+  /* Fondo con imagen (BackgroundPicker) */
+  --bg-layer-filter: blur(24px) brightness(0.35) saturate(0.9);
+  --bg-overlay-start: rgba(11, 14, 20, 0.72);
+  --bg-overlay-end: rgba(11, 14, 20, 0.94);
+
   --radius: 10px;
   --sidebar-width: 220px;
   --font-family: system-ui, -apple-system, "Segoe UI", Roboto, sans-serif;
+}
+
+/* ============================================================
+   TEMA CLARO — activado con <html data-theme="light">
+   Paleta según el documento de diseño (fondo #F6F7FB, sidebar
+   blanco, identidad morada #6366F1 sin cambios).
+   ============================================================ */
+[data-theme="light"] {
+  --color-bg: #f6f7fb;
+  --color-sidebar-bg: #ffffff;
+  --color-surface: #ffffff;
+  --color-surface-solid: #ffffff;
+  --color-card: #ffffff;
+  --color-card-hover: #fafaff;
+  --color-border: #e5e7eb;
+  --color-text: #111827;
+  --color-text-muted: #4b5563;
+  --color-text-tertiary: #6b7280;
+
+  --color-primary: #6366f1;
+  --color-primary-hover: #4f46e5;
+  --color-primary-soft: #eef2ff;
+
+  --color-danger: #dc2626;
+  --color-whatsapp: #16a34a;
+  --color-whatsapp-bg: #f0fdf4;
+  --color-whatsapp-bg-hover: #dcfce7;
+
+  --color-status-default: #b45309;
+  --color-status-protected: #1d4ed8;
+  --color-status-custom: #15803d;
+  --color-status-none: #6b7280;
+
+  --color-input-bg: #ffffff;
+  --color-btn-secondary-bg: #ffffff;
+  --color-btn-secondary-bg-hover: #f3f4f6;
+  --color-lead-hover-border: #d1d5db;
+  --color-scrollbar-thumb: rgba(17, 24, 39, 0.15);
+  --color-focus-border: #818cf8;
+  --color-focus-shadow: rgba(99, 102, 241, 0.12);
+  --color-active-bg: #eef2ff;
+  --color-active-text: #4f46e5;
+
+  /* En claro no queremos la misma intensidad de imagen de fondo:
+     imagen muy tenue + overlay casi blanco (ver punto 15 del doc) */
+  --bg-layer-filter: blur(28px) brightness(1.5) saturate(0.4) opacity(0.4);
+  --bg-overlay-start: rgba(246, 247, 251, 0.75);
+  --bg-overlay-end: rgba(246, 247, 251, 0.94);
 }
 
 * {
@@ -38,6 +112,7 @@ body {
   font-family: var(--font-family);
   background: var(--color-bg);
   color: var(--color-text);
+  transition: background 0.15s ease, color 0.15s ease;
 }
 
 a {
@@ -50,25 +125,24 @@ button {
   cursor: pointer;
 }
 
-/* Capa de fondo fija (imagen + blur) — ver components/ui/backgroundPicker.js.
-   Se mantiene el concepto pero mucho más discreto: el fondo es una
-   textura ambiental, no debe competir con los leads. */
+/* Capa de fondo fija (imagen + blur) — ver components/ui/backgroundPicker.js */
 .bg-layer {
   position: fixed;
   inset: 0;
   z-index: -2;
   background-size: cover;
   background-position: center;
-  filter: blur(24px) brightness(0.35) saturate(0.9);
+  filter: var(--bg-layer-filter);
   transform: scale(1.1);
-  transition: background-image 0.3s ease;
+  transition: background-image 0.3s ease, filter 0.15s ease;
 }
 
 .bg-overlay {
   position: fixed;
   inset: 0;
   z-index: -1;
-  background: linear-gradient(180deg, rgba(11, 14, 20, 0.72), rgba(11, 14, 20, 0.94));
+  background: linear-gradient(180deg, var(--bg-overlay-start), var(--bg-overlay-end));
+  transition: background 0.15s ease;
 }
 
 .btn {
@@ -94,13 +168,13 @@ button {
 }
 
 .btn-secondary {
-  background: rgba(255, 255, 255, 0.06);
+  background: var(--color-btn-secondary-bg);
   border-color: var(--color-border);
   color: var(--color-text);
 }
 
 .btn-secondary:hover {
-  background: rgba(255, 255, 255, 0.1);
+  background: var(--color-btn-secondary-bg-hover);
 }
 
 .btn-whatsapp {
@@ -119,6 +193,7 @@ button {
   backdrop-filter: blur(16px);
   -webkit-backdrop-filter: blur(16px);
   box-shadow: 0 4px 24px rgba(0, 0, 0, 0.25);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 /* Tarjeta de lead: variante de .card con hover sutil (transform + borde) */
@@ -132,7 +207,7 @@ button {
 }
 .lead-card:hover {
   transform: translateY(-2px);
-  border-color: rgba(255, 255, 255, 0.16);
+  border-color: var(--color-lead-hover-border);
   background: var(--color-card-hover);
 }
 .lead-card.selected {
@@ -164,8 +239,9 @@ button {
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
   font-size: 0.9rem;
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--color-input-bg);
   color: var(--color-text);
+  transition: background 0.15s ease, border-color 0.15s ease;
 }
 
 .input::placeholder {
@@ -173,12 +249,13 @@ button {
 }
 
 .input:focus, select:focus {
-  outline: 2px solid var(--color-primary);
-  outline-offset: 1px;
+  outline: none;
+  border-color: var(--color-focus-border);
+  box-shadow: 0 0 0 3px var(--color-focus-shadow);
 }
 
 select {
-  background: rgba(255, 255, 255, 0.05);
+  background: var(--color-input-bg);
   color: var(--color-text);
   border: 1px solid var(--color-border);
   border-radius: var(--radius);
@@ -197,6 +274,26 @@ select option {
 }
 .scroll-x::-webkit-scrollbar-thumb,
 .scroll-y::-webkit-scrollbar-thumb {
-  background: rgba(255, 255, 255, 0.15);
+  background: var(--color-scrollbar-thumb);
   border-radius: 4px;
+}
+
+/* Botón de cambio de tema (☀️ / 🌙) — ver components/ui/themeToggle.js */
+.theme-toggle {
+  display: inline-flex;
+  align-items: center;
+  justify-content: center;
+  width: 38px;
+  height: 38px;
+  border-radius: 50%;
+  border: 1px solid var(--color-border);
+  background: var(--color-btn-secondary-bg);
+  color: var(--color-text);
+  font-size: 1rem;
+  flex-shrink: 0;
+  transition: background 0.15s ease, border-color 0.15s ease, transform 0.15s ease;
+}
+.theme-toggle:hover {
+  background: var(--color-btn-secondary-bg-hover);
+  transform: scale(1.05);
 }
