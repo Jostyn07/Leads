@@ -100,7 +100,7 @@ export default function UsuariosPage() {
       .select(
         `id, full_name, role, estado, llamadas_habilitadas,
          minutos_asignados_segundos, minutos_utilizados_segundos, minutos_disponibles_segundos,
-         plantilla_id, call_permission_templates ( id, nombre )`,
+         plantilla_id, call_permission_templates!plantilla_id ( id, nombre )`,
         { count: 'exact' }
       );
 
