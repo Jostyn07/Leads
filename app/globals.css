@@ -29,6 +29,32 @@
   --color-status-custom: #4ade80;    /* embudos personalizados */
   --color-status-none: #737b88;      /* sin embudo asignado */
 
+  /* Cápsula de estado con 3 capas (texto/fondo/borde) — antes se
+     armaba el fondo concatenando "var(...)1f" en JS, que es CSS
+     inválido y no pintaba nada. Ahora cada estado trae su propio
+     trío de variables, ya resuelto por tema. */
+  --color-status-default-text: #fbbf24;
+  --color-status-default-bg: rgba(251, 191, 36, 0.16);
+  --color-status-default-border: rgba(251, 191, 36, 0.4);
+
+  --color-status-protected-text: #60a5fa;
+  --color-status-protected-bg: rgba(96, 165, 250, 0.16);
+  --color-status-protected-border: rgba(96, 165, 250, 0.4);
+
+  --color-status-custom-text: #4ade80;
+  --color-status-custom-bg: rgba(74, 222, 128, 0.16);
+  --color-status-custom-border: rgba(74, 222, 128, 0.4);
+
+  --color-status-none-text: #a3aab6;
+  --color-status-none-bg: rgba(163, 170, 182, 0.14);
+  --color-status-none-border: rgba(163, 170, 182, 0.3);
+
+  /* Reservado para un futuro estado "Error / perdido" (no existe aún
+     en el esquema de embudos, solo se define por si se agrega). */
+  --color-status-error-text: #f87171;
+  --color-status-error-bg: rgba(248, 113, 113, 0.16);
+  --color-status-error-border: rgba(248, 113, 113, 0.4);
+
   /* Superficies interactivas que antes eran rgba(255,255,255,X) fijos
      — ahora son variables para poder invertirlas en tema claro */
   --color-input-bg: rgba(255, 255, 255, 0.05);
@@ -81,6 +107,26 @@
   --color-status-protected: #1d4ed8;
   --color-status-custom: #15803d;
   --color-status-none: #6b7280;
+
+  --color-status-default-text: #b45309;
+  --color-status-default-bg: #fef3c7;
+  --color-status-default-border: #fde68a;
+
+  --color-status-protected-text: #1d4ed8;
+  --color-status-protected-bg: #dbeafe;
+  --color-status-protected-border: #bfdbfe;
+
+  --color-status-custom-text: #15803d;
+  --color-status-custom-bg: #dcfce7;
+  --color-status-custom-border: #bbf7d0;
+
+  --color-status-none-text: #6b7280;
+  --color-status-none-bg: #f3f4f6;
+  --color-status-none-border: #e5e7eb;
+
+  --color-status-error-text: #b91c1c;
+  --color-status-error-bg: #fee2e2;
+  --color-status-error-border: #fecaca;
 
   --color-input-bg: #ffffff;
   --color-btn-secondary-bg: #ffffff;
@@ -222,6 +268,7 @@ button {
   gap: 5px;
   padding: 3px 9px;
   border-radius: 999px;
+  border: 1px solid transparent;
   font-size: 0.76rem;
   font-weight: 600;
   white-space: nowrap;

@@ -8,17 +8,41 @@ import { supabase } from '../../lib/supabase/client';
 // Colorea la cápsula de embudo según su tipo. En este modelo el embudo
 // ES el estado (no hay una capa de "etapa" separada) — ver la
 // discusión de arquitectura en /areas/plataforma-leads.
+//
+// Cada estado usa un trío de variables (texto/fondo/borde) definido en
+// globals.css, ya resuelto para el tema activo — no se arma el color
+// concatenando strings en JS.
 function getFunnelBadge(funnel) {
   if (!funnel) {
-    return { label: 'Sin asignar', color: 'var(--color-status-none)' };
+    return {
+      label: 'Sin asignar',
+      text: 'var(--color-status-none-text)',
+      bg: 'var(--color-status-none-bg)',
+      border: 'var(--color-status-none-border)',
+    };
   }
   if (funnel.is_default_stage) {
-    return { label: funnel.name, color: 'var(--color-status-default)' };
+    return {
+      label: funnel.name,
+      text: 'var(--color-status-default-text)',
+      bg: 'var(--color-status-default-bg)',
+      border: 'var(--color-status-default-border)',
+    };
   }
   if (funnel.is_protected) {
-    return { label: funnel.name, color: 'var(--color-status-protected)' };
+    return {
+      label: funnel.name,
+      text: 'var(--color-status-protected-text)',
+      bg: 'var(--color-status-protected-bg)',
+      border: 'var(--color-status-protected-border)',
+    };
   }
-  return { label: funnel.name, color: 'var(--color-status-custom)' };
+  return {
+    label: funnel.name,
+    text: 'var(--color-status-custom-text)',
+    bg: 'var(--color-status-custom-bg)',
+    border: 'var(--color-status-custom-border)',
+  };
 }
 
 export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid', onChanged }) {
@@ -74,8 +98,11 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
   );
 
   const StatusPill = (
-    <span className="status-pill" style={{ background: `${badge.color}1f`, color: badge.color }}>
-      <span className="status-dot" style={{ background: badge.color }} />
+    <span
+      className="status-pill"
+      style={{ background: badge.bg, borderColor: badge.border, color: badge.text }}
+    >
+      <span className="status-dot" style={{ background: badge.text }} />
       {badge.label}
     </span>
   );
