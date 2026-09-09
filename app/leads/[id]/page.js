@@ -5,7 +5,7 @@ import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../../lib/supabase/client';
 import LeadDetailForm from '../../../components/leads/leadDetailForm';
 import Button from '../../../components/ui/button';
-import LeadCallsTab from '../../../components/telefonia/leadCallsTab';
+import LeadCallsTab from '../../../components/telefonia/leadsCallsTab';
 import CallInProgress from '../../../components/telefonia/callInProgress';
 
 const TABS = [
