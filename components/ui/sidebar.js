@@ -75,12 +75,14 @@ export default function Sidebar() {
                 display: 'flex',
                 alignItems: 'center',
                 gap: '0.6rem',
-                padding: '0.6rem 0.75rem',
+                height: 44,
+                padding: '0 0.85rem',
                 borderRadius: 'var(--radius)',
                 fontSize: '0.9rem',
                 fontWeight: active ? 600 : 400,
                 background: active ? 'rgba(99, 102, 241, 0.18)' : 'transparent',
-                color: active ? 'var(--color-primary)' : 'var(--color-text)',
+                color: active ? '#8b8df7' : 'var(--color-text)',
+                boxShadow: active ? 'inset 3px 0 0 var(--color-primary)' : 'none',
               }}
             >
               <span aria-hidden>{link.icon}</span>

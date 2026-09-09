@@ -8,22 +8,33 @@ import LeadCreateForm from '../../components/leads/leadCreateForm';
 import Modal from '../../components/ui/modal';
 import Button from '../../components/ui/button';
 
-const PAGE_SIZE = 60;
 const SEARCH_DEBOUNCE_MS = 400;
+const PAGE_SIZE_OPTIONS = [10, 20, 40, 60];
+const SORT_OPTIONS = [
+  { value: 'name_asc', label: 'Nombre (A-Z)' },
+  { value: 'name_desc', label: 'Nombre (Z-A)' },
+  { value: 'created_desc', label: 'Más reciente' },
+  { value: 'created_asc', label: 'Más antiguo' },
+];
 
 export default function LeadsPage() {
   const [leads, setLeads] = useState([]);
   const [totalCount, setTotalCount] = useState(0);
   const [page, setPage] = useState(1);
+  const [pageSize, setPageSize] = useState(20);
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
   const [selectedIds, setSelectedIds] = useState([]);
+  const [viewMode, setViewMode] = useState('grid'); // 'grid' | 'list'
 
   const [search, setSearch] = useState('');
   const [debouncedSearch, setDebouncedSearch] = useState('');
+  const [sortBy, setSortBy] = useState('created_desc');
 
   const [funnels, setFunnels] = useState([]);
   const [filterFunnelId, setFilterFunnelId] = useState(''); // '' = todos, 'unassigned' = sin embudo, o id de embudo
+
+  const [stats, setStats] = useState(null); // { total, unassigned, byFunnel: [{funnel, count}] }
 
   const [isAdmin, setIsAdmin] = useState(false);
   const [users, setUsers] = useState([]);
@@ -43,12 +54,13 @@ export default function LeadsPage() {
   }, [search]);
 
   useEffect(() => {
-    loadLeads(page, debouncedSearch, filterFunnelId);
-  }, [page, debouncedSearch, filterFunnelId]);
+    loadLeads(page, pageSize, debouncedSearch, filterFunnelId, sortBy);
+  }, [page, pageSize, debouncedSearch, filterFunnelId, sortBy]);
 
   useEffect(() => {
     loadFunnels();
     loadRole();
+    loadStats();
   }, []);
 
   async function loadRole() {
@@ -68,21 +80,57 @@ export default function LeadsPage() {
   async function loadFunnels() {
     const { data } = await supabase
       .from('funnels')
-      .select('id, name')
+      .select('id, name, is_default_stage, is_protected')
       .order('is_default_stage', { ascending: false })
+      .order('is_protected', { ascending: false })
       .order('name');
     setFunnels(data ?? []);
   }
 
+  // Totales para la fila de estadísticas — siempre reflejan el total
+  // real (no el filtro/búsqueda actual de la tabla).
+  async function loadStats() {
+    const { count: total } = await supabase
+      .from('leads')
+      .select('id', { count: 'exact', head: true })
+      .eq('status', 'active');
+
+    const { count: unassigned } = await supabase
+      .from('leads')
+      .select('id, lead_funnel!left(funnel_id)', { count: 'exact', head: true })
+      .eq('status', 'active')
+      .is('lead_funnel.funnel_id', null);
+
+    const { data: funnelsData } = await supabase
+      .from('funnels')
+      .select('id, name, is_default_stage, is_protected')
+      .order('is_default_stage', { ascending: false })
+      .order('is_protected', { ascending: false })
+      .order('name');
+
+    const byFunnel = await Promise.all(
+      (funnelsData ?? []).slice(0, 4).map(async (f) => {
+        const { count } = await supabase
+          .from('lead_funnel')
+          .select('leads!inner(id)', { count: 'exact', head: true })
+          .eq('funnel_id', f.id)
+          .eq('leads.status', 'active');
+        return { funnel: f, count: count ?? 0 };
+      })
+    );
+
+    setStats({ total: total ?? 0, unassigned: unassigned ?? 0, byFunnel });
+  }
+
   // Trae una página de leads directamente del servidor, con el filtro de
-  // búsqueda y de embudo ya aplicados en la consulta (no en el cliente) —
-  // así funciona igual de bien con 100 leads que con 50,000.
-  async function loadLeads(pageNum, searchTerm, funnelFilter) {
+  // búsqueda, embudo y orden ya aplicados en la consulta (no en el
+  // cliente) — así funciona igual de bien con 100 leads que con 50,000.
+  async function loadLeads(pageNum, size, searchTerm, funnelFilter, sort) {
     setLoading(true);
     setErrorMsg(null);
 
-    const from = (pageNum - 1) * PAGE_SIZE;
-    const to = from + PAGE_SIZE - 1;
+    const from = (pageNum - 1) * size;
+    const to = from + size - 1;
 
     const specificFunnel = funnelFilter && funnelFilter !== 'unassigned';
 
@@ -91,9 +139,9 @@ export default function LeadsPage() {
       .select(
         specificFunnel
           ? `id, name, phone, address, email, status,
-             lead_funnel!inner ( funnel_id, funnels ( name ) )`
+             lead_funnel!inner ( funnel_id, funnels ( name, is_default_stage, is_protected ) )`
           : `id, name, phone, address, email, status,
-             lead_funnel ( funnel_id, funnels ( name ) )`,
+             lead_funnel ( funnel_id, funnels ( name, is_default_stage, is_protected ) )`,
         { count: 'exact' }
       )
       .eq('status', 'active');
@@ -109,7 +157,10 @@ export default function LeadsPage() {
       query = query.or(`name.ilike.%${term}%,phone.ilike.%${term}%`);
     }
 
-    query = query.order('created_at', { ascending: false }).range(from, to);
+    const [sortField, sortDir] = sort.startsWith('name')
+      ? ['name', sort.endsWith('asc') ? 'asc' : 'desc']
+      : ['created_at', sort.endsWith('asc') ? 'asc' : 'desc'];
+    query = query.order(sortField, { ascending: sortDir === 'asc' }).range(from, to);
 
     const { data, error, count } = await query;
 
@@ -123,8 +174,9 @@ export default function LeadsPage() {
     setLoading(false);
   }
 
-  function refreshCurrentPage() {
-    loadLeads(page, debouncedSearch, filterFunnelId);
+  function refreshAll() {
+    loadLeads(page, pageSize, debouncedSearch, filterFunnelId, sortBy);
+    loadStats();
   }
 
   function toggleSelect(leadId) {
@@ -154,17 +206,65 @@ export default function LeadsPage() {
       resetForm();
       setCreateModalOpen(false);
       setPage(1);
-      loadLeads(1, debouncedSearch, filterFunnelId);
+      loadLeads(1, pageSize, debouncedSearch, filterFunnelId, sortBy);
+      loadStats();
     }
   }
 
-  const totalPages = Math.max(1, Math.ceil(totalCount / PAGE_SIZE));
+  const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
+  const rangeStart = totalCount === 0 ? 0 : (page - 1) * pageSize + 1;
+  const rangeEnd = Math.min(page * pageSize, totalCount);
+
+  // Genera la lista de números de página a mostrar (con "…" si hay muchas).
+  function getPageNumbers() {
+    const pages = [];
+    const windowSize = 1;
+    for (let p = 1; p <= totalPages; p++) {
+      if (p === 1 || p === totalPages || Math.abs(p - page) <= windowSize) {
+        pages.push(p);
+      } else if (pages[pages.length - 1] !== '…') {
+        pages.push('…');
+      }
+    }
+    return pages;
+  }
+
+  const funnelBadgeColor = (f) =>
+    f.is_default_stage
+      ? 'var(--color-status-default)'
+      : f.is_protected
+      ? 'var(--color-status-protected)'
+      : 'var(--color-status-custom)';
 
   return (
-    <main style={{ padding: '1.5rem', maxWidth: 1300, margin: '0 auto' }}>
-      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
-        <h1 style={{ fontSize: '1.25rem' }}>Leads</h1>
-        <div style={{ display: 'flex', gap: '0.5rem' }}>
+    <main style={{ padding: '28px 32px', maxWidth: 1500, margin: '0 auto' }}>
+      {/* Encabezado */}
+      <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
+        <div>
+          <h1 style={{ fontSize: '1.9rem', fontWeight: 750, letterSpacing: '-0.02em' }}>Leads</h1>
+          <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
+            {totalCount.toLocaleString('es')} leads disponibles
+          </p>
+        </div>
+        <div style={{ display: 'flex', gap: '0.5rem', alignItems: 'center' }}>
+          <div className="card" style={{ padding: 4, display: 'flex', gap: 4 }}>
+            <button
+              onClick={() => setViewMode('grid')}
+              title="Vista cuadrícula"
+              className={viewMode === 'grid' ? 'btn btn-primary' : 'btn btn-secondary'}
+              style={{ border: 'none', padding: '0.4rem 0.6rem' }}
+            >
+              ▦
+            </button>
+            <button
+              onClick={() => setViewMode('list')}
+              title="Vista lista"
+              className={viewMode === 'list' ? 'btn btn-primary' : 'btn btn-secondary'}
+              style={{ border: 'none', padding: '0.4rem 0.6rem' }}
+            >
+              ☰
+            </button>
+          </div>
           <a href="/funnels" className="btn btn-secondary">Ver embudos</a>
           {isAdmin && <Button onClick={() => setCreateModalOpen(true)}>+ Nuevo lead</Button>}
           {isAdmin && <a href="/imports" className="btn btn-secondary">Importar Excel</a>}
@@ -175,17 +275,59 @@ export default function LeadsPage() {
         <p style={{ color: 'var(--color-danger)', marginBottom: '1rem' }}>{errorMsg}</p>
       )}
 
-      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem' }}>
-        <input
-          className="input"
-          placeholder="Buscar por nombre o teléfono…"
-          value={search}
-          onChange={(e) => setSearch(e.target.value)}
-          style={{ maxWidth: 280 }}
-        />
+      {/* Fila de estadísticas */}
+      {stats && (
+        <div
+          style={{
+            display: 'grid',
+            gridTemplateColumns: `repeat(${2 + stats.byFunnel.length}, minmax(120px, 1fr))`,
+            gap: '0.75rem',
+            marginBottom: '1.25rem',
+          }}
+        >
+          <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.85rem 1rem' }}>
+            <span style={{ fontSize: '1.1rem' }}>👥</span>
+            <div>
+              <div style={{ fontWeight: 750, fontSize: '1.1rem' }}>{stats.total.toLocaleString('es')}</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Total de leads</div>
+            </div>
+          </div>
+          {stats.byFunnel.map(({ funnel, count }) => (
+            <div key={funnel.id} className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.85rem 1rem' }}>
+              <span className="status-dot" style={{ background: funnelBadgeColor(funnel), width: 12, height: 12 }} />
+              <div>
+                <div style={{ fontWeight: 750, fontSize: '1.1rem' }}>{count.toLocaleString('es')}</div>
+                <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>{funnel.name}</div>
+              </div>
+            </div>
+          ))}
+          <div className="card" style={{ display: 'flex', alignItems: 'center', gap: '0.6rem', padding: '0.85rem 1rem' }}>
+            <span className="status-dot" style={{ background: 'var(--color-status-none)', width: 12, height: 12 }} />
+            <div>
+              <div style={{ fontWeight: 750, fontSize: '1.1rem' }}>{stats.unassigned.toLocaleString('es')}</div>
+              <div style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>Sin asignar</div>
+            </div>
+          </div>
+        </div>
+      )}
+
+      {/* Búsqueda y filtros */}
+      <div style={{ display: 'flex', gap: '0.75rem', flexWrap: 'wrap', marginBottom: '1rem', alignItems: 'center' }}>
+        <div style={{ position: 'relative', width: 320, maxWidth: '100%' }}>
+          <span style={{ position: 'absolute', left: 12, top: '50%', transform: 'translateY(-50%)', color: 'var(--color-text-muted)', fontSize: '0.85rem' }}>
+            🔎
+          </span>
+          <input
+            className="input"
+            placeholder="Buscar nombre, teléfono…"
+            value={search}
+            onChange={(e) => setSearch(e.target.value)}
+            style={{ paddingLeft: '2rem', height: 44 }}
+          />
+        </div>
         <select
           className="input"
-          style={{ maxWidth: 200 }}
+          style={{ maxWidth: 200, height: 44 }}
           value={filterFunnelId}
           onChange={(e) => {
             setFilterFunnelId(e.target.value);
@@ -211,9 +353,26 @@ export default function LeadsPage() {
             Limpiar filtros
           </button>
         )}
+
+        <div style={{ marginLeft: 'auto', display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+          <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Ordenar por</span>
+          <select
+            className="input"
+            style={{ height: 44 }}
+            value={sortBy}
+            onChange={(e) => {
+              setSortBy(e.target.value);
+              setPage(1);
+            }}
+          >
+            {SORT_OPTIONS.map((o) => (
+              <option key={o.value} value={o.value}>{o.label}</option>
+            ))}
+          </select>
+        </div>
       </div>
 
-      <LeadBulkActions selectedIds={selectedIds} onDone={refreshCurrentPage} isAdmin={isAdmin} />
+      <LeadBulkActions selectedIds={selectedIds} onDone={refreshAll} isAdmin={isAdmin} />
 
       {loading ? (
         <p>Cargando…</p>
@@ -242,22 +401,25 @@ export default function LeadsPage() {
             </span>
           </div>
 
-          <div
-            style={{
-              display: 'grid',
-              gridTemplateColumns: 'repeat(auto-fill, minmax(160px, 1fr))',
-              gap: '0.85rem',
-            }}
-          >
-            {leads.map((lead) => (
-              <LeadCard
-                key={lead.id}
-                lead={lead}
-                selected={selectedIds.includes(lead.id)}
-                onToggleSelect={toggleSelect}
-              />
-            ))}
-          </div>
+          {viewMode === 'grid' ? (
+            <div
+              style={{
+                display: 'grid',
+                gridTemplateColumns: 'repeat(auto-fill, minmax(280px, 1fr))',
+                gap: '0.75rem',
+              }}
+            >
+              {leads.map((lead) => (
+                <LeadCard key={lead.id} lead={lead} selected={selectedIds.includes(lead.id)} onToggleSelect={toggleSelect} view="grid" onChanged={refreshAll} />
+              ))}
+            </div>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: '0.6rem' }}>
+              {leads.map((lead) => (
+                <LeadCard key={lead.id} lead={lead} selected={selectedIds.includes(lead.id)} onToggleSelect={toggleSelect} view="list" onChanged={refreshAll} />
+              ))}
+            </div>
+          )}
 
           {leads.length === 0 && (
             <p style={{ padding: '1rem', textAlign: 'center', color: 'var(--color-text-muted)' }}>
@@ -265,27 +427,63 @@ export default function LeadsPage() {
             </p>
           )}
 
-          {totalPages > 1 && (
-            <div style={{ display: 'flex', justifyContent: 'center', alignItems: 'center', gap: '1rem', marginTop: '1.5rem' }}>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setPage((p) => Math.max(1, p - 1))}
-                disabled={page === 1}
+          {/* Paginación */}
+          <div
+            style={{
+              display: 'flex',
+              justifyContent: 'space-between',
+              alignItems: 'center',
+              marginTop: '1.5rem',
+              flexWrap: 'wrap',
+              gap: '0.75rem',
+            }}
+          >
+            <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+              Mostrando {rangeStart}–{rangeEnd} de {totalCount.toLocaleString('es')} leads
+            </span>
+
+            {totalPages > 1 && (
+              <div style={{ display: 'flex', alignItems: 'center', gap: '0.35rem' }}>
+                <button className="btn btn-secondary" onClick={() => setPage((p) => Math.max(1, p - 1))} disabled={page === 1} style={{ padding: '0.4rem 0.6rem' }}>
+                  ←
+                </button>
+                {getPageNumbers().map((p, i) =>
+                  p === '…' ? (
+                    <span key={`ellipsis-${i}`} style={{ padding: '0 0.3rem', color: 'var(--color-text-muted)' }}>…</span>
+                  ) : (
+                    <button
+                      key={p}
+                      onClick={() => setPage(p)}
+                      className={p === page ? 'btn btn-primary' : 'btn btn-secondary'}
+                      style={{ padding: '0.4rem 0.7rem', minWidth: 36 }}
+                    >
+                      {p}
+                    </button>
+                  )
+                )}
+                <button className="btn btn-secondary" onClick={() => setPage((p) => Math.min(totalPages, p + 1))} disabled={page === totalPages} style={{ padding: '0.4rem 0.6rem' }}>
+                  →
+                </button>
+              </div>
+            )}
+
+            <div style={{ display: 'flex', alignItems: 'center', gap: '0.5rem' }}>
+              <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Leads por página</span>
+              <select
+                className="input"
+                style={{ width: 80 }}
+                value={pageSize}
+                onChange={(e) => {
+                  setPageSize(Number(e.target.value));
+                  setPage(1);
+                }}
               >
-                ← Anterior
-              </button>
-              <span style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-                Página {page} de {totalPages}
-              </span>
-              <button
-                className="btn btn-secondary"
-                onClick={() => setPage((p) => Math.min(totalPages, p + 1))}
-                disabled={page === totalPages}
-              >
-                Siguiente →
-              </button>
+                {PAGE_SIZE_OPTIONS.map((n) => (
+                  <option key={n} value={n}>{n}</option>
+                ))}
+              </select>
             </div>
-          )}
+          </div>
         </>
       )}
 
