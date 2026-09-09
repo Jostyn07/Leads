@@ -9,9 +9,16 @@ import ThemeToggle from './themeToggle';
 const LINKS = [
   { href: '/dashboard', label: 'Dashboard', icon: '📊' },
   { href: '/leads', label: 'Leads', icon: '👥' },
+  { href: '/llamadas', label: 'Llamadas', icon: '📞' },
   { href: '/funnels', label: 'Embudos', icon: '🔀' },
   { href: '/imports', label: 'Importar', icon: '📥', adminOnly: true },
-  { href: '/settings', label: 'Configuración', icon: '⚙️', adminOnly: true },
+];
+
+const SETTINGS_LINKS = [
+  { href: '/settings/usuarios', label: 'Usuarios' },
+  { href: '/settings/plantillas', label: 'Plantillas' },
+  { href: '/settings', label: 'Preferencias' },
+  { href: '/settings/integraciones', label: 'Integraciones' },
 ];
 
 export default function Sidebar() {
@@ -19,10 +26,15 @@ export default function Sidebar() {
   const router = useRouter();
   const [profile, setProfile] = useState(null);
   const [menuOpen, setMenuOpen] = useState(false);
+  const [settingsOpen, setSettingsOpen] = useState(pathname?.startsWith('/settings'));
 
   useEffect(() => {
     if (pathname === '/login' || pathname === '/') return;
     loadProfile();
+  }, [pathname]);
+
+  useEffect(() => {
+    if (pathname?.startsWith('/settings')) setSettingsOpen(true);
   }, [pathname]);
 
   async function loadProfile() {
@@ -43,6 +55,7 @@ export default function Sidebar() {
   if (pathname === '/login' || pathname === '/') return null;
 
   const displayName = profile?.fullName || profile?.email || 'Cuenta';
+  const isAdmin = profile?.role === 'admin';
 
   return (
     <aside
@@ -73,8 +86,8 @@ export default function Sidebar() {
         <ThemeToggle />
       </div>
 
-      <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, padding: '0 0.6rem' }}>
-        {LINKS.filter((link) => !link.adminOnly || profile?.role === 'admin').map((link) => {
+      <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, padding: '0 0.6rem', overflowY: 'auto' }}>
+        {LINKS.filter((link) => !link.adminOnly || isAdmin).map((link) => {
           const active = pathname?.startsWith(link.href);
           return (
             <a
@@ -99,6 +112,60 @@ export default function Sidebar() {
             </a>
           );
         })}
+
+        {isAdmin && (
+          <div>
+            <button
+              onClick={() => setSettingsOpen((v) => !v)}
+              style={{
+                display: 'flex',
+                alignItems: 'center',
+                justifyContent: 'space-between',
+                width: '100%',
+                height: 44,
+                padding: '0 0.85rem',
+                borderRadius: 'var(--radius)',
+                fontSize: '0.9rem',
+                background: 'transparent',
+                border: 'none',
+                color: 'var(--color-text)',
+              }}
+            >
+              <span style={{ display: 'flex', alignItems: 'center', gap: '0.6rem' }}>
+                <span aria-hidden>⚙️</span>
+                Configuración
+              </span>
+              <span style={{ fontSize: '0.7rem', color: 'var(--color-text-muted)' }}>{settingsOpen ? '▾' : '▸'}</span>
+            </button>
+
+            {settingsOpen && (
+              <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: '1.7rem', marginTop: 2 }}>
+                {SETTINGS_LINKS.map((link) => {
+                  const active = pathname === link.href;
+                  return (
+                    <a
+                      key={link.href}
+                      href={link.href}
+                      style={{
+                        height: 36,
+                        display: 'flex',
+                        alignItems: 'center',
+                        padding: '0 0.6rem',
+                        borderRadius: 'var(--radius)',
+                        fontSize: '0.85rem',
+                        background: active ? 'var(--color-active-bg)' : 'transparent',
+                        color: active ? 'var(--color-active-text)' : 'var(--color-text-muted)',
+                        fontWeight: active ? 600 : 400,
+                      }}
+                    >
+                      {link.label}
+                    </a>
+                  );
+                })}
+              </div>
+            )}
+          </div>
+        )}
       </nav>
 
       {/* Usuario, esquina inferior. Click → menú con opción de cerrar sesión. */}

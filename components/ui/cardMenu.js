@@ -66,7 +66,7 @@ export default function CardMenu({ items }) {
                 fontSize: '0.85rem',
                 color: item.danger ? 'var(--color-danger)' : 'var(--color-text)',
               }}
-              onMouseEnter={(e) => (e.currentTarget.style.background = 'rgba(255,255,255,0.06)')}
+              onMouseEnter={(e) => (e.currentTarget.style.background = 'var(--color-btn-secondary-bg-hover)')}
               onMouseLeave={(e) => (e.currentTarget.style.background = 'none')}
             >
               {item.label}

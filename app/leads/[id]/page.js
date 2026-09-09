@@ -1,14 +1,22 @@
 'use client';
 
 import { useEffect, useState } from 'react';
-import { useParams, useRouter } from 'next/navigation';
+import { useParams, useRouter, useSearchParams } from 'next/navigation';
 import { supabase } from '../../../lib/supabase/client';
 import LeadDetailForm from '../../../components/leads/leadDetailForm';
 import Button from '../../../components/ui/button';
+import LeadCallsTab from '../../../components/telefonia/leadCallsTab';
+import CallInProgress from '../../../components/telefonia/callInProgress';
+
+const TABS = [
+  { key: 'informacion', label: 'Información' },
+  { key: 'llamadas', label: 'Llamadas' },
+];
 
 export default function LeadDetailPage() {
   const { id: leadId } = useParams();
   const router = useRouter();
+  const searchParams = useSearchParams();
 
   const [lead, setLead] = useState(null);
   const [loading, setLoading] = useState(true);
@@ -18,6 +26,9 @@ export default function LeadDetailPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [users, setUsers] = useState([]);
   const [reassigning, setReassigning] = useState(false);
+
+  const [activeTab, setActiveTab] = useState(searchParams.get('tab') === 'llamadas' ? 'llamadas' : 'informacion');
+  const [activeCall, setActiveCall] = useState(null);
 
   useEffect(() => {
     if (leadId) {
@@ -126,100 +137,133 @@ export default function LeadDetailPage() {
   const owner = Array.isArray(lead.owner) ? lead.owner[0] : lead.owner;
 
   return (
-    <main style={{ padding: '1.5rem', maxWidth: 560, margin: '0 auto' }}>
+    <main style={{ padding: '1.5rem', maxWidth: activeTab === 'llamadas' ? 960 : 560, margin: '0 auto', transition: 'max-width 0.15s ease' }}>
       <a href="/leads" style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
         ← Leads
       </a>
-      <h1 style={{ fontSize: '1.25rem', margin: '0.5rem 0 1rem' }}>{lead.name}</h1>
+      <h1 style={{ fontSize: '1.25rem', margin: '0.5rem 0 0.75rem' }}>{lead.name}</h1>
 
-      {errorMsg && (
-        <p style={{ color: 'var(--color-danger)', marginBottom: '1rem' }}>{errorMsg}</p>
+      <div className="tabs-bar">
+        {TABS.map((t) => (
+          <button
+            key={t.key}
+            onClick={() => setActiveTab(t.key)}
+            className={`tab-link${activeTab === t.key ? ' active' : ''}`}
+            style={{ background: 'none', border: 'none', cursor: 'pointer' }}
+          >
+            {t.label}
+          </button>
+        ))}
+      </div>
+
+      {errorMsg && <p style={{ color: 'var(--color-danger)', marginBottom: '1rem' }}>{errorMsg}</p>}
+
+      {activeTab === 'informacion' ? (
+        <>
+          <div className="card" style={{ marginBottom: '1rem' }}>
+            <p style={{ fontSize: '0.9rem', marginBottom: 4 }}>
+              <strong>Embudo:</strong> {rel?.funnels?.name || 'Sin asignar'}
+            </p>
+            <p style={{ fontSize: '0.9rem', marginBottom: isAdmin ? 8 : 0 }}>
+              <strong>Estado:</strong> {lead.status === 'archived' ? 'Archivado' : 'Activo'}
+            </p>
+
+            {isAdmin ? (
+              <label style={{ display: 'block', marginTop: 8 }}>
+                <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>
+                  <strong>Propietario</strong>
+                </span>
+                <select
+                  className="input"
+                  value={lead.owner_id || ''}
+                  onChange={(e) => handleReassign(e.target.value)}
+                  disabled={reassigning}
+                >
+                  {users.map((u) => (
+                    <option key={u.id} value={u.id}>{u.full_name || u.id}</option>
+                  ))}
+                </select>
+              </label>
+            ) : (
+              owner?.full_name && (
+                <p style={{ fontSize: '0.9rem' }}>
+                  <strong>Propietario:</strong> {owner.full_name}
+                </p>
+              )
+            )}
+          </div>
+
+          <div className="card" style={{ marginBottom: '1rem' }}>
+            <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Información del contacto</h2>
+            {isAdmin ? (
+              <LeadDetailForm lead={lead} onSave={handleSave} saving={saving} />
+            ) : (
+              <div style={{ display: 'grid', gap: '0.6rem' }}>
+                <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: 4 }}>
+                  Solo un administrador puede editar estos datos.
+                </p>
+                <div>
+                  <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Nombre</span>
+                  <span>{lead.name}</span>
+                </div>
+                <div>
+                  <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Teléfono</span>
+                  <span>{lead.phone}</span>
+                </div>
+                <div>
+                  <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Dirección</span>
+                  <span>{lead.address || '—'}</span>
+                </div>
+                <div>
+                  <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Correo</span>
+                  <span>{lead.email || '—'}</span>
+                </div>
+              </div>
+            )}
+          </div>
+
+          <div style={{ display: 'flex', gap: '0.5rem' }}>
+            {lead.phone && (
+              <button
+                className="btn btn-secondary"
+                onClick={() => setActiveCall({ name: lead.name, numero: lead.phone, leadId: lead.id })}
+              >
+                📞 Llamar
+              </button>
+            )}
+            {lead.phone && (
+              <a
+                href={`https://wa.me/${lead.phone.replace(/\D/g, '')}`}
+                target="_blank"
+                rel="noreferrer"
+                className="btn btn-secondary"
+              >
+                WhatsApp
+              </a>
+            )}
+            {lead.status !== 'archived' && (
+              <Button variant="danger" onClick={handleArchive}>
+                Archivar
+              </Button>
+            )}
+          </div>
+        </>
+      ) : (
+        <LeadCallsTab lead={lead} onCall={setActiveCall} />
       )}
 
-      <div className="card" style={{ marginBottom: '1rem' }}>
-        <p style={{ fontSize: '0.9rem', marginBottom: 4 }}>
-          <strong>Embudo:</strong> {rel?.funnels?.name || 'Sin asignar'}
-        </p>
-        <p style={{ fontSize: '0.9rem', marginBottom: isAdmin ? 8 : 0 }}>
-          <strong>Estado:</strong> {lead.status === 'archived' ? 'Archivado' : 'Activo'}
-        </p>
-
-        {isAdmin ? (
-          <label style={{ display: 'block', marginTop: 8 }}>
-            <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>
-              <strong>Propietario</strong>
-            </span>
-            <select
-              className="input"
-              value={lead.owner_id || ''}
-              onChange={(e) => handleReassign(e.target.value)}
-              disabled={reassigning}
-            >
-              {users.map((u) => (
-                <option key={u.id} value={u.id}>{u.full_name || u.id}</option>
-              ))}
-            </select>
-          </label>
-        ) : (
-          owner?.full_name && (
-            <p style={{ fontSize: '0.9rem' }}>
-              <strong>Propietario:</strong> {owner.full_name}
-            </p>
-          )
-        )}
-      </div>
-
-      <div className="card" style={{ marginBottom: '1rem' }}>
-        <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Información del contacto</h2>
-        {isAdmin ? (
-          <LeadDetailForm lead={lead} onSave={handleSave} saving={saving} />
-        ) : (
-          <div style={{ display: 'grid', gap: '0.6rem' }}>
-            <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: 4 }}>
-              Solo un administrador puede editar estos datos.
-            </p>
-            <div>
-              <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Nombre</span>
-              <span>{lead.name}</span>
-            </div>
-            <div>
-              <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Teléfono</span>
-              <span>{lead.phone}</span>
-            </div>
-            <div>
-              <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Dirección</span>
-              <span>{lead.address || '—'}</span>
-            </div>
-            <div>
-              <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Correo</span>
-              <span>{lead.email || '—'}</span>
-            </div>
-          </div>
-        )}
-      </div>
-
-      <div style={{ display: 'flex', gap: '0.5rem' }}>
-        {lead.phone && (
-          <a href={`tel:${lead.phone}`} className="btn btn-secondary">
-            📞 Llamar
-          </a>
-        )}
-        {lead.phone && (
-          <a
-            href={`https://wa.me/${lead.phone.replace(/\D/g, '')}`}
-            target="_blank"
-            rel="noreferrer"
-            className="btn btn-secondary"
-          >
-            WhatsApp
-          </a>
-        )}
-        {lead.status !== 'archived' && (
-          <Button variant="danger" onClick={handleArchive}>
-            Archivar
-          </Button>
-        )}
-      </div>
+      {activeCall && (
+        <CallInProgress
+          call={activeCall}
+          onClose={() => setActiveCall(null)}
+          onSaveResult={async ({ resultado, duracionSegundos }) => {
+            // TODO: igual que en app/llamadas/page.js — falta el Voice SDK
+            // de Twilio para que exista una fila real en `calls` que
+            // actualizar con este resultado y duración.
+            console.log('Resultado de llamada (pendiente de persistir):', resultado, duracionSegundos);
+          }}
+        />
+      )}
     </main>
   );
 }
