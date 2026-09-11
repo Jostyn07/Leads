@@ -53,17 +53,47 @@ function OrganizacionesPageContent() {
   }
 
   async function handleSave(form) {
-    const payload = { name: form.name.trim() };
-
-    const { error } = form.id
-      ? await supabase.from('organizations').update(payload).eq('id', form.id)
-      : await supabase.from('organizations').insert(payload);
-
-    if (!error) {
-      setEditingOrg(null);
-      load();
+    if (form.id) {
+      // Renombrar una organización existente -- no toca administradores.
+      const { error } = await supabase.from('organizations').update({ name: form.name.trim() }).eq('id', form.id);
+      if (!error) {
+        setEditingOrg(null);
+        load();
+      }
+      return error;
     }
-    return error;
+
+    // Nueva organización: se crea junto con su primer administrador en
+    // un solo paso -- el owner nunca crea operadores sueltos, solo la
+    // organización y quien la va a administrar de ahí en adelante.
+    const { data: newOrg, error: orgError } = await supabase
+      .from('organizations')
+      .insert({ name: form.name.trim() })
+      .select('id')
+      .single();
+
+    if (orgError) return orgError;
+
+    const { data, error: fnError } = await supabase.functions.invoke('admin-create-user', {
+      body: {
+        full_name: form.admin_full_name.trim(),
+        email: form.admin_email.trim(),
+        role: 'admin',
+        organization_id: newOrg.id,
+      },
+    });
+
+    if (fnError || data?.error) {
+      // La organización ya quedó creada aunque falle el administrador --
+      // se puede invitar al admin después desde Usuarios, o borrar la
+      // organización y reintentar. No se revierte solo para no ocultar
+      // que la organización sí existe.
+      return { message: (data?.error || fnError.message) + ' (la organización sí se creó, puedes invitar al administrador después desde Usuarios)' };
+    }
+
+    setEditingOrg(null);
+    load();
+    return null;
   }
 
   async function handleDelete(org) {
@@ -141,7 +171,7 @@ function OrgModal({ org, onClose, onSave }) {
 
   useEffect(() => {
     if (org) {
-      setForm({ id: org.id || null, name: org.name || '' });
+      setForm({ id: org.id || null, name: org.name || '', admin_full_name: '', admin_email: '' });
       setError(null);
     } else {
       setForm(null);
@@ -150,9 +180,15 @@ function OrgModal({ org, onClose, onSave }) {
 
   if (!org || !form) return null;
 
+  const isNew = !form.id;
+
   async function handleSave() {
     if (!form.name.trim()) {
       setError('El nombre es obligatorio.');
+      return;
+    }
+    if (isNew && (!form.admin_full_name.trim() || !form.admin_email.trim())) {
+      setError('El nombre y el correo del administrador son obligatorios.');
       return;
     }
     setSaving(true);
@@ -162,18 +198,43 @@ function OrgModal({ org, onClose, onSave }) {
   }
 
   return (
-    <Modal open={!!org} onClose={onClose} title={form.id ? 'Renombrar organización' : 'Nueva organización'}>
+    <Modal open={!!org} onClose={onClose} title={isNew ? 'Nueva organización' : 'Renombrar organización'}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <Input
-          label="Nombre"
+          label="Nombre de la organización"
           placeholder="Ej. Astra Insurance Agency LLC"
           value={form.name}
           onChange={(e) => setForm({ ...form, name: e.target.value })}
         />
+
+        {isNew && (
+          <>
+            <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+              Toda organización nace con su primer administrador — de ahí en adelante, es él quien crea a sus propios usuarios.
+            </p>
+            <Input
+              label="Nombre del administrador"
+              placeholder="Ej. Andreina García"
+              value={form.admin_full_name}
+              onChange={(e) => setForm({ ...form, admin_full_name: e.target.value })}
+            />
+            <Input
+              label="Correo del administrador"
+              type="email"
+              placeholder="admin@empresa.com"
+              value={form.admin_email}
+              onChange={(e) => setForm({ ...form, admin_email: e.target.value })}
+            />
+            <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>
+              Se le envía un correo de invitación para que defina su propia contraseña.
+            </p>
+          </>
+        )}
+
         {error && <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>}
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-          <Button onClick={handleSave} disabled={saving}>{saving ? 'Guardando…' : 'Guardar'}</Button>
+          <Button onClick={handleSave} disabled={saving}>{saving ? 'Creando…' : isNew ? 'Crear organización' : 'Guardar'}</Button>
         </div>
       </div>
     </Modal>

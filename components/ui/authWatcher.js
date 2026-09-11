@@ -4,22 +4,9 @@ import { useEffect } from 'react';
 import { useRouter, usePathname } from 'next/navigation';
 import { supabase } from '../../lib/supabase/client';
 
-// Cada cuánto se revisa si el usuario sigue activo mientras la app está
-// abierta — cubre el caso de alguien que YA tenía sesión iniciada cuando
-// un admin lo marca como inactivo desde Usuarios.
-const CHECK_INTERVAL_MS = 60_000;
-
 export default function AuthWatcher() {
   const router = useRouter();
   const pathname = usePathname();
-
-  async function checkEstado(userId) {
-    const { data } = await supabase.from('profiles').select('estado').eq('id', userId).single();
-    if (data?.estado === 'inactivo') {
-      await supabase.auth.signOut();
-      router.replace('/login?inactive=1');
-    }
-  }
 
   useEffect(() => {
     const { data: listener } = supabase.auth.onAuthStateChange((event, session) => {
@@ -30,7 +17,7 @@ export default function AuthWatcher() {
         router.replace('/login?expired=1');
       }
       if (event === 'SIGNED_IN' && session?.user) {
-        checkEstado(session.user.id);
+        checkEstadoOnce(session.user.id);
       }
     });
 
@@ -38,28 +25,52 @@ export default function AuthWatcher() {
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname, router]);
 
+  // Revisión de estado UNA sola vez al montar (sesión restaurada del
+  // almacenamiento local, que no dispara SIGNED_IN) usando la sesión
+  // ya en memoria -- getSession() es local, no llama al servidor.
   useEffect(() => {
     if (pathname === '/login' || pathname === '/') return;
 
-    // Revisión inmediata al montar (cubre una sesión ya restaurada del
-    // almacenamiento local, que no dispara SIGNED_IN) + revisión periódica.
+    let channel = null;
+
     (async () => {
       const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) checkEstado(user.id);
+        data: { session },
+      } = await supabase.auth.getSession();
+      if (!session?.user) return;
+
+      await checkEstadoOnce(session.user.id);
+
+      // A partir de acá, nos enteramos de un cambio a inactivo en
+      // tiempo real (Realtime), sin volver a llamar a getUser() ni
+      // hacer polling contra el servidor de Auth.
+      channel = supabase
+        .channel(`profile-estado:${session.user.id}`)
+        .on(
+          'postgres_changes',
+          { event: 'UPDATE', schema: 'public', table: 'profiles', filter: `id=eq.${session.user.id}` },
+          (payload) => {
+            if (payload.new?.estado === 'inactivo') {
+              supabase.auth.signOut().then(() => router.replace('/login?inactive=1'));
+            }
+          }
+        )
+        .subscribe();
     })();
 
-    const interval = setInterval(async () => {
-      const {
-        data: { user },
-      } = await supabase.auth.getUser();
-      if (user) checkEstado(user.id);
-    }, CHECK_INTERVAL_MS);
-
-    return () => clearInterval(interval);
+    return () => {
+      if (channel) supabase.removeChannel(channel);
+    };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, [pathname]);
+
+  async function checkEstadoOnce(userId) {
+    const { data } = await supabase.from('profiles').select('estado').eq('id', userId).single();
+    if (data?.estado === 'inactivo') {
+      await supabase.auth.signOut();
+      router.replace('/login?inactive=1');
+    }
+  }
 
   return null;
 }
