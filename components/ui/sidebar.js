@@ -10,8 +10,9 @@ const LINKS = [
   { href: '/dashboard', label: 'Dashboard', icon: '📊' },
   { href: '/leads', label: 'Leads', icon: '👥' },
   { href: '/llamadas', label: 'Llamadas', icon: '📞' },
+  { href: '/comunicacion', label: 'Comunicación', icon: '💬' },
   { href: '/funnels', label: 'Embudos', icon: '🔀' },
-  { href: '/imports', label: 'Importar', icon: '📥', adminOnly: true },
+  { href: '/imports', label: 'Importar', icon: '📥', ownerOnly: true },
 ];
 
 const SETTINGS_LINKS = [
@@ -56,6 +57,7 @@ export default function Sidebar() {
 
   const displayName = profile?.fullName || profile?.email || 'Cuenta';
   const isAdmin = profile?.role === 'admin';
+  const isOwner = profile?.role === 'owner';
 
   return (
     <aside
@@ -87,7 +89,7 @@ export default function Sidebar() {
       </div>
 
       <nav style={{ flex: 1, display: 'flex', flexDirection: 'column', gap: 2, padding: '0 0.6rem', overflowY: 'auto' }}>
-        {LINKS.filter((link) => !link.adminOnly || isAdmin).map((link) => {
+        {LINKS.filter((link) => (!link.adminOnly || isAdmin) && (!link.ownerOnly || isOwner)).map((link) => {
           const active = pathname?.startsWith(link.href);
           return (
             <a
