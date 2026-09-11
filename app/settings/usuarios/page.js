@@ -172,7 +172,15 @@ export default function UsuariosPage() {
     // Solo el owner puede mover a alguien de una organización a otra.
     if (isOwner && updated.organization_id) payload.organization_id = updated.organization_id;
 
-    const { error } = await supabase.from('profiles').update(payload).eq('id', updated.id);
+    const { data, error } = await supabase.from('profiles').update(payload).eq('id', updated.id).select('id');
+
+    // RLS bloquea un UPDATE en silencio: si la fila no cumple la
+    // policy, Postgres actualiza 0 filas SIN lanzar error. Sin este
+    // chequeo, el modal se cerraba como si hubiera funcionado aunque
+    // el cambio nunca se aplicara.
+    if (!error && (!data || data.length === 0)) {
+      return { message: 'No se pudo guardar — no tienes permiso para editar este usuario.' };
+    }
 
     if (!error) {
       setEditingUser(null);
