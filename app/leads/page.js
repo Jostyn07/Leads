@@ -37,6 +37,7 @@ export default function LeadsPage() {
   const [stats, setStats] = useState(null); // { total, unassigned, byFunnel: [{funnel, count}] }
 
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [users, setUsers] = useState([]);
 
   const [createModalOpen, setCreateModalOpen] = useState(false);
@@ -71,6 +72,7 @@ export default function LeadsPage() {
     const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
     const admin = data?.role === 'admin';
     setIsAdmin(admin);
+    setIsOwner(data?.role === 'owner');
     if (admin) {
       const { data: profiles } = await supabase.from('profiles').select('id, full_name').order('full_name');
       setUsers(profiles ?? []);
@@ -267,7 +269,7 @@ export default function LeadsPage() {
           </div>
           <a href="/funnels" className="btn btn-secondary">Ver embudos</a>
           {isAdmin && <Button onClick={() => setCreateModalOpen(true)}>+ Nuevo lead</Button>}
-          {isAdmin && <a href="/imports" className="btn btn-secondary">Importar Excel</a>}
+          {isOwner && <a href="/imports" className="btn btn-secondary">Importar Excel</a>}
         </div>
       </div>
 

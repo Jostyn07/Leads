@@ -19,6 +19,7 @@ function LoginForm() {
   const router = useRouter();
   const searchParams = useSearchParams();
   const expired = searchParams.get('expired') === '1';
+  const inactive = searchParams.get('inactive') === '1';
   const [email, setEmail] = useState('');
   const [password, setPassword] = useState('');
   const [error, setError] = useState(null);
@@ -40,7 +41,7 @@ function LoginForm() {
           .eq('id', user.id)
           .single();
 
-        if (profile && profile.role !== 'admin' && profile.subdomain) {
+        if (profile && profile.role !== 'admin' && profile.role !== 'owner' && profile.subdomain) {
           const currentHost = window.location.hostname;
           const expectedHost = `${profile.subdomain}.${ROOT_DOMAIN}`;
           if (currentHost !== expectedHost) {
@@ -66,6 +67,12 @@ function LoginForm() {
         {expired && !error && (
           <p style={{ color: 'var(--color-text-muted)', fontSize: '0.85rem', marginBottom: '1rem' }}>
             Tu sesión expiró. Inicia sesión de nuevo para continuar.
+          </p>
+        )}
+
+        {inactive && !error && (
+          <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem', marginBottom: '1rem' }}>
+            Tu cuenta está inactiva. Contacta a un administrador.
           </p>
         )}
 

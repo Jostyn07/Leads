@@ -24,6 +24,7 @@ export default function LeadDetailPage() {
   const [errorMsg, setErrorMsg] = useState(null);
 
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
   const [users, setUsers] = useState([]);
   const [reassigning, setReassigning] = useState(false);
 
@@ -43,8 +44,9 @@ export default function LeadDetailPage() {
     } = await supabase.auth.getUser();
     if (!user) return;
     const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
-    if (data?.role === 'admin') {
-      setIsAdmin(true);
+    if (data?.role === 'admin' || data?.role === 'owner') {
+      setIsAdmin(data.role === 'admin');
+      setIsOwner(data.role === 'owner');
       const { data: profiles } = await supabase.from('profiles').select('id, full_name').order('full_name');
       setUsers(profiles ?? []);
     }
@@ -135,6 +137,7 @@ export default function LeadDetailPage() {
 
   const rel = Array.isArray(lead.lead_funnel) ? lead.lead_funnel[0] : lead.lead_funnel;
   const owner = Array.isArray(lead.owner) ? lead.owner[0] : lead.owner;
+  const canManage = isAdmin || isOwner;
 
   return (
     <main style={{ padding: '1.5rem', maxWidth: activeTab === 'llamadas' ? 960 : 560, margin: '0 auto', transition: 'max-width 0.15s ease' }}>
@@ -164,11 +167,11 @@ export default function LeadDetailPage() {
             <p style={{ fontSize: '0.9rem', marginBottom: 4 }}>
               <strong>Embudo:</strong> {rel?.funnels?.name || 'Sin asignar'}
             </p>
-            <p style={{ fontSize: '0.9rem', marginBottom: isAdmin ? 8 : 0 }}>
+            <p style={{ fontSize: '0.9rem', marginBottom: canManage ? 8 : 0 }}>
               <strong>Estado:</strong> {lead.status === 'archived' ? 'Archivado' : 'Activo'}
             </p>
 
-            {isAdmin ? (
+            {canManage ? (
               <label style={{ display: 'block', marginTop: 8 }}>
                 <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>
                   <strong>Propietario</strong>
@@ -195,12 +198,12 @@ export default function LeadDetailPage() {
 
           <div className="card" style={{ marginBottom: '1rem' }}>
             <h2 style={{ fontSize: '1rem', marginBottom: '0.75rem' }}>Información del contacto</h2>
-            {isAdmin ? (
+            {canManage ? (
               <LeadDetailForm lead={lead} onSave={handleSave} saving={saving} />
             ) : (
               <div style={{ display: 'grid', gap: '0.6rem' }}>
                 <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: 4 }}>
-                  Solo un administrador puede editar estos datos.
+                  Solo un administrador o el dueño de la plataforma puede editar estos datos.
                 </p>
                 <div>
                   <span style={{ display: 'block', fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Nombre</span>

@@ -22,7 +22,9 @@ function minutos(segundos) {
 }
 
 function rolLabel(role) {
-  return role === 'admin' ? 'Administrador' : 'Agente';
+  if (role === 'admin') return 'Administrador';
+  if (role === 'owner') return 'Dueño';
+  return 'Agente';
 }
 
 export default function UsuariosPage() {

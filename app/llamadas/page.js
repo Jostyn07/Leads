@@ -33,6 +33,8 @@ function formatFechaHora(iso) {
 
 export default function LlamadasPage() {
   const [isAdmin, setIsAdmin] = useState(false);
+  const [isOwner, setIsOwner] = useState(false);
+  const canSeeAll = isAdmin || isOwner;
   const [currentUserId, setCurrentUserId] = useState(null);
   const [usuarios, setUsuarios] = useState([]);
 
@@ -84,8 +86,10 @@ export default function LlamadasPage() {
 
     const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
     const admin = data?.role === 'admin';
+    const owner = data?.role === 'owner';
     setIsAdmin(admin);
-    if (admin) {
+    setIsOwner(owner);
+    if (admin || owner) {
       const { data: profiles } = await supabase.from('profiles').select('id, full_name').order('full_name');
       setUsuarios(profiles ?? []);
     }
@@ -104,7 +108,7 @@ export default function LlamadasPage() {
     if (fechaHasta) query = query.lte('created_at', `${fechaHasta}T23:59:59`);
     if (filterResultado) query = query.eq('resultado', filterResultado);
     if (filterTipo) query = query.eq('tipo', filterTipo);
-    if (isAdmin && filterUsuario) query = query.eq('user_id', filterUsuario);
+    if (canSeeAll && filterUsuario) query = query.eq('user_id', filterUsuario);
     return query;
   }
 
@@ -157,7 +161,7 @@ export default function LlamadasPage() {
       return rec?.disponible;
     }).length;
 
-    const targetUserId = isAdmin ? filterUsuario : currentUserId;
+    const targetUserId = canSeeAll ? filterUsuario : currentUserId;
 
     let minutosDisponibles = null;
     if (targetUserId) {
@@ -179,13 +183,13 @@ export default function LlamadasPage() {
   }
 
   const totalPages = Math.max(1, Math.ceil(totalCount / pageSize));
-  const showGlobalCard = isAdmin && !filterUsuario;
+  const showGlobalCard = canSeeAll && !filterUsuario;
 
   const columns = [
     { key: 'fecha', label: 'Fecha y hora', render: (c) => formatFechaHora(c.created_at) },
     {
       key: 'lead',
-      label: isAdmin && !filterUsuario ? 'Lead / Número · Usuario' : 'Lead / Número',
+      label: canSeeAll && !filterUsuario ? 'Lead / Número · Usuario' : 'Lead / Número',
       render: (c) => (
         <div>
           <div style={{ fontWeight: 600, fontSize: '0.88rem' }}>{c.leads?.name || c.numero}</div>
@@ -194,7 +198,7 @@ export default function LlamadasPage() {
           ) : (
             <span className="status-pill" style={{ ...pillStyle('none'), marginTop: 2 }}>Número externo</span>
           )}
-          {isAdmin && !filterUsuario && (
+          {canSeeAll && !filterUsuario && (
             <div style={{ fontSize: '0.74rem', color: 'var(--color-text-tertiary)', marginTop: 2 }}>{c.profiles?.full_name || '—'}</div>
           )}
         </div>
@@ -317,14 +321,14 @@ export default function LlamadasPage() {
           <option value="lead">Lead</option>
           <option value="externa">Externa</option>
         </select>
-        {isAdmin && (
+        {canSeeAll && (
           <button className="btn btn-secondary" onClick={() => setShowMoreFilters((v) => !v)} style={{ marginLeft: 'auto' }}>
             ▤ Filtros
           </button>
         )}
       </div>
 
-      {isAdmin && showMoreFilters && (
+      {canSeeAll && showMoreFilters && (
         <div style={{ marginBottom: '1rem' }}>
           <select className="input" style={{ maxWidth: 220, height: 42 }} value={filterUsuario} onChange={(e) => { setFilterUsuario(e.target.value); setPage(1); }}>
             <option value="">Todos los usuarios</option>

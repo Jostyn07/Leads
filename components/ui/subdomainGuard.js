@@ -42,7 +42,7 @@ export default function SubdomainGuard() {
       .eq('id', user.id)
       .single();
 
-    if (!profile || profile.role === 'admin') return; // admin sin restricción
+    if (!profile || profile.role === 'admin' || profile.role === 'owner') return; // admin/owner sin restricción
 
     const currentSubdomain = getCurrentSubdomain();
     if (!currentSubdomain && !profile.subdomain) return; // ninguno configurado aún, no bloquea
