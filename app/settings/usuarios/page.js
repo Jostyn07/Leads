@@ -331,8 +331,14 @@ export default function UsuariosPage() {
         <div>
           <h1 style={{ fontSize: '1.9rem', fontWeight: 750, letterSpacing: '-0.02em' }}>Usuarios</h1>
           <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginTop: 4 }}>Gestiona los usuarios y sus permisos</p>
+          {isOwner && (
+            <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)', marginTop: 4 }}>
+              Para crear una organización nueva (y su primer administrador), ve a{' '}
+              <a href="/settings/organizaciones" style={{ color: 'var(--color-primary)' }}>Configuración → Organizaciones</a>.
+            </p>
+          )}
         </div>
-        <Button onClick={() => setCreateModalOpen(true)}>+ Nuevo usuario</Button>
+        {!isOwner && <Button onClick={() => setCreateModalOpen(true)}>+ Nuevo usuario</Button>}
       </div>
 
       <div className="tabs-bar">
