@@ -97,9 +97,11 @@ export default function LeadsPage() {
   // (la columna es generada automáticamente desde address) y arma la
   // lista de opciones del filtro sin duplicados.
   async function loadStates() {
-    const { data } = await supabase.from('leads').select('state').eq('status', 'active').not('state', 'is', null);
-    const unique = Array.from(new Set((data ?? []).map((r) => r.state))).sort();
-    setStates(unique);
+    // RPC con DISTINCT real en la base -- traer la columna state de
+    // TODOS los leads (podían ser miles) chocaba con el límite de
+    // 1000 filas por defecto de PostgREST y se perdían estados.
+    const { data } = await supabase.rpc('get_distinct_lead_states');
+    setStates((data ?? []).map((r) => r.state));
   }
 
   // Totales para la fila de estadísticas — siempre reflejan el total
