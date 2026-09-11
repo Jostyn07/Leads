@@ -18,6 +18,7 @@ const LINKS = [
 const SETTINGS_LINKS = [
   { href: '/settings/usuarios', label: 'Usuarios' },
   { href: '/settings/plantillas', label: 'Plantillas' },
+  { href: '/settings/organizaciones', label: 'Organizaciones', ownerOnly: true },
   { href: '/settings', label: 'Preferencias' },
   { href: '/settings/integraciones', label: 'Integraciones' },
 ];
@@ -58,6 +59,7 @@ export default function Sidebar() {
   const displayName = profile?.fullName || profile?.email || 'Cuenta';
   const isAdmin = profile?.role === 'admin';
   const isOwner = profile?.role === 'owner';
+  const canSeeSettings = isAdmin || isOwner;
 
   return (
     <aside
@@ -115,7 +117,7 @@ export default function Sidebar() {
           );
         })}
 
-        {isAdmin && (
+        {canSeeSettings && (
           <div>
             <button
               onClick={() => setSettingsOpen((v) => !v)}
@@ -142,7 +144,7 @@ export default function Sidebar() {
 
             {settingsOpen && (
               <div style={{ display: 'flex', flexDirection: 'column', gap: 2, paddingLeft: '1.7rem', marginTop: 2 }}>
-                {SETTINGS_LINKS.map((link) => {
+                {SETTINGS_LINKS.filter((link) => !link.ownerOnly || isOwner).map((link) => {
                   const active = pathname === link.href;
                   return (
                     <a

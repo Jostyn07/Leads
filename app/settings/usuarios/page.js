@@ -42,11 +42,30 @@ export default function UsuariosPage() {
   const [filterLlamadas, setFilterLlamadas] = useState('');
 
   const [templates, setTemplates] = useState([]);
+  const [organizations, setOrganizations] = useState([]);
+  const [isOwner, setIsOwner] = useState(false);
   const [stats, setStats] = useState(null);
 
   const [editingUser, setEditingUser] = useState(null);
   const [addingMinutesTo, setAddingMinutesTo] = useState(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+
+  useEffect(() => {
+    loadContext();
+  }, []);
+
+  async function loadContext() {
+    const {
+      data: { user },
+    } = await supabase.auth.getUser();
+    if (!user) return;
+    const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+    if (data?.role === 'owner') {
+      setIsOwner(true);
+      const { data: orgs } = await supabase.from('organizations').select('id, name').order('name');
+      setOrganizations(orgs ?? []);
+    }
+  }
 
   useEffect(() => {
     const t = setTimeout(() => {
@@ -100,7 +119,8 @@ export default function UsuariosPage() {
       .select(
         `id, full_name, role, estado, llamadas_habilitadas,
          minutos_asignados_segundos, minutos_utilizados_segundos, minutos_disponibles_segundos,
-         plantilla_id, call_permission_templates!plantilla_id ( id, nombre )`,
+         plantilla_id, call_permission_templates!plantilla_id ( id, nombre ),
+         organization_id, organizations ( id, name )`,
         { count: 'exact' }
       );
 
@@ -139,17 +159,18 @@ export default function UsuariosPage() {
   }
 
   async function saveEdit(updated) {
-    const { error } = await supabase
-      .from('profiles')
-      .update({
-        full_name: updated.full_name,
-        role: updated.role,
-        estado: updated.estado,
-        plantilla_id: updated.plantilla_id || null,
-        llamadas_habilitadas: updated.llamadas_habilitadas,
-        minutos_asignados_segundos: Math.round(Number(updated.minutos_asignados) || 0) * 60,
-      })
-      .eq('id', updated.id);
+    const payload = {
+      full_name: updated.full_name,
+      role: updated.role,
+      estado: updated.estado,
+      plantilla_id: updated.plantilla_id || null,
+      llamadas_habilitadas: updated.llamadas_habilitadas,
+      minutos_asignados_segundos: Math.round(Number(updated.minutos_asignados) || 0) * 60,
+    };
+    // Solo el owner puede mover a alguien de una organización a otra.
+    if (isOwner && updated.organization_id) payload.organization_id = updated.organization_id;
+
+    const { error } = await supabase.from('profiles').update(payload).eq('id', updated.id);
 
     if (!error) {
       setEditingUser(null);
@@ -212,6 +233,15 @@ export default function UsuariosPage() {
       },
     },
     { key: 'role', label: 'Rol', render: (u) => rolLabel(u.role) },
+    ...(isOwner
+      ? [
+          {
+            key: 'organizacion',
+            label: 'Organización',
+            render: (u) => u.organizations?.name || <span style={{ color: 'var(--color-text-tertiary)' }}>—</span>,
+          },
+        ]
+      : []),
     {
       key: 'plantilla',
       label: 'Plantilla',
@@ -393,6 +423,8 @@ export default function UsuariosPage() {
       <EditUserModal
         user={editingUser}
         templates={templates}
+        organizations={organizations}
+        isOwner={isOwner}
         onClose={() => setEditingUser(null)}
         onSave={saveEdit}
       />
@@ -420,7 +452,7 @@ function StatCard({ icon, value, label, color }) {
   );
 }
 
-function EditUserModal({ user, templates, onClose, onSave }) {
+function EditUserModal({ user, templates, organizations, isOwner, onClose, onSave }) {
   const [form, setForm] = useState(null);
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -435,6 +467,7 @@ function EditUserModal({ user, templates, onClose, onSave }) {
         plantilla_id: user.plantilla_id || '',
         llamadas_habilitadas: user.llamadas_habilitadas,
         minutos_asignados: minutos(user.minutos_asignados_segundos),
+        organization_id: user.organization_id || '',
       });
       setError(null);
     } else {
@@ -455,6 +488,17 @@ function EditUserModal({ user, templates, onClose, onSave }) {
     <Modal open={!!user} onClose={onClose} title="Editar usuario">
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <Input label="Nombre completo" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
+
+        {isOwner && (
+          <label style={{ display: 'block' }}>
+            <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Organización</span>
+            <select className="input" value={form.organization_id} onChange={(e) => setForm({ ...form, organization_id: e.target.value })}>
+              {organizations.map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+          </label>
+        )}
 
         <label style={{ display: 'block' }}>
           <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Rol</span>
