@@ -7,13 +7,13 @@ import { validateLeadRows } from '../../lib/validations/leads';
 import ImportPreviewTable from '../../components/import/importPreviewTable';
 import DeleteLeadsSection from '../../components/import/deleteLeadsSection';
 import ExportLeadsSection from '../../components/import/exportLeadsSection';
-import RequireAdmin from '../../components/ui/requireAdmin';
+import RequireOwner from '../../components/ui/requireOwner';
 
 export default function ImportsPage() {
   return (
-    <RequireAdmin>
+    <RequireOwner>
       <ImportsPageContent />
-    </RequireAdmin>
+    </RequireOwner>
   );
 }
 
@@ -26,6 +26,10 @@ function ImportsPageContent() {
 
   const [users, setUsers] = useState([]);
   const [selectedUserId, setSelectedUserId] = useState(''); // '' = quien importa (yo mismo)
+
+  const [organizations, setOrganizations] = useState([]);
+  const [selectedOrgId, setSelectedOrgId] = useState('');
+
   const [progress, setProgress] = useState(null); // { done, totalBatches }
 
   const BATCH_SIZE = 150;
@@ -33,11 +37,17 @@ function ImportsPageContent() {
 
   useEffect(() => {
     loadUsers();
+    loadOrganizations();
   }, []);
 
   async function loadUsers() {
     const { data } = await supabase.from('profiles').select('id, full_name').order('full_name');
     setUsers(data ?? []);
+  }
+
+  async function loadOrganizations() {
+    const { data } = await supabase.from('organizations').select('id, name').order('name');
+    setOrganizations(data ?? []);
   }
 
   async function handleFileChange(e) {
@@ -60,6 +70,10 @@ function ImportsPageContent() {
 
   async function handleConfirmImport() {
     if (!preview) return;
+    if (!selectedOrgId) {
+      setErrorMsg('Selecciona a qué organización van estos leads antes de importar.');
+      return;
+    }
     setImporting(true);
     setErrorMsg(null);
 
@@ -89,6 +103,7 @@ function ImportsPageContent() {
           const { data, error } = await supabase.rpc('import_leads', {
             p_rows: batches[i],
             p_file_name: fileName,
+            p_organization_id: selectedOrgId,
             p_owner_id: selectedUserId || null,
           });
 
@@ -135,6 +150,22 @@ function ImportsPageContent() {
       <div className="card" style={{ marginBottom: '1rem' }}>
         <label style={{ display: 'block', marginBottom: '0.75rem', maxWidth: 320 }}>
           <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>
+            Organización destino <span style={{ color: 'var(--color-danger)' }}>*</span>
+          </span>
+          <select
+            className="input"
+            value={selectedOrgId}
+            onChange={(e) => setSelectedOrgId(e.target.value)}
+          >
+            <option value="">Selecciona una organización…</option>
+            {organizations.map((o) => (
+              <option key={o.id} value={o.id}>{o.name}</option>
+            ))}
+          </select>
+        </label>
+
+        <label style={{ display: 'block', marginBottom: '0.75rem', maxWidth: 320 }}>
+          <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>
             Importar para el usuario
           </span>
           <select
@@ -162,7 +193,9 @@ function ImportsPageContent() {
         <div className="card" style={{ marginBottom: '1rem' }}>
           <h2 style={{ fontSize: '1rem', marginBottom: '0.5rem' }}>Vista previa: {fileName}</h2>
           <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
-            Se importarán para:{' '}
+            Se importarán a{' '}
+            <strong>{organizations.find((o) => o.id === selectedOrgId)?.name || 'organización sin seleccionar'}</strong>
+            {' '}para:{' '}
             <strong>
               {selectedUserId ? users.find((u) => u.id === selectedUserId)?.full_name : 'ti mismo'}
             </strong>
@@ -187,7 +220,7 @@ function ImportsPageContent() {
             <button
               className="btn btn-primary"
               onClick={handleConfirmImport}
-              disabled={importing || preview.validCount === 0}
+              disabled={importing || preview.validCount === 0 || !selectedOrgId}
             >
               {importing
                 ? progress
