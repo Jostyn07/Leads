@@ -34,6 +34,9 @@ export default function LeadsPage() {
   const [funnels, setFunnels] = useState([]);
   const [filterFunnelId, setFilterFunnelId] = useState(''); // '' = todos, 'unassigned' = sin embudo, o id de embudo
 
+  const [states, setStates] = useState([]);
+  const [filterState, setFilterState] = useState(''); // '' = todos
+
   const [stats, setStats] = useState(null); // { total, unassigned, byFunnel: [{funnel, count}] }
 
   const [isAdmin, setIsAdmin] = useState(false);
@@ -55,13 +58,14 @@ export default function LeadsPage() {
   }, [search]);
 
   useEffect(() => {
-    loadLeads(page, pageSize, debouncedSearch, filterFunnelId, sortBy);
-  }, [page, pageSize, debouncedSearch, filterFunnelId, sortBy]);
+    loadLeads(page, pageSize, debouncedSearch, filterFunnelId, filterState, sortBy);
+  }, [page, pageSize, debouncedSearch, filterFunnelId, filterState, sortBy]);
 
   useEffect(() => {
     loadFunnels();
     loadRole();
     loadStats();
+    loadStates();
   }, []);
 
   async function loadRole() {
@@ -87,6 +91,15 @@ export default function LeadsPage() {
       .order('is_protected', { ascending: false })
       .order('name');
     setFunnels(data ?? []);
+  }
+
+  // Trae los valores de "state" que realmente existen entre los leads
+  // (la columna es generada automáticamente desde address) y arma la
+  // lista de opciones del filtro sin duplicados.
+  async function loadStates() {
+    const { data } = await supabase.from('leads').select('state').eq('status', 'active').not('state', 'is', null);
+    const unique = Array.from(new Set((data ?? []).map((r) => r.state))).sort();
+    setStates(unique);
   }
 
   // Totales para la fila de estadísticas — siempre reflejan el total
@@ -125,9 +138,9 @@ export default function LeadsPage() {
   }
 
   // Trae una página de leads directamente del servidor, con el filtro de
-  // búsqueda, embudo y orden ya aplicados en la consulta (no en el
-  // cliente) — así funciona igual de bien con 100 leads que con 50,000.
-  async function loadLeads(pageNum, size, searchTerm, funnelFilter, sort) {
+  // búsqueda, embudo, estado y orden ya aplicados en la consulta (no en
+  // el cliente) — así funciona igual de bien con 100 leads que con 50,000.
+  async function loadLeads(pageNum, size, searchTerm, funnelFilter, stateFilter, sort) {
     setLoading(true);
     setErrorMsg(null);
 
@@ -140,9 +153,9 @@ export default function LeadsPage() {
       .from('leads')
       .select(
         specificFunnel
-          ? `id, name, phone, address, email, status,
+          ? `id, name, phone, address, email, status, state,
              lead_funnel!inner ( funnel_id, funnels ( name, is_default_stage, is_protected ) )`
-          : `id, name, phone, address, email, status,
+          : `id, name, phone, address, email, status, state,
              lead_funnel ( funnel_id, funnels ( name, is_default_stage, is_protected ) )`,
         { count: 'exact' }
       )
@@ -152,6 +165,10 @@ export default function LeadsPage() {
       query = query.eq('lead_funnel.funnel_id', funnelFilter);
     } else if (funnelFilter === 'unassigned') {
       query = query.is('lead_funnel.funnel_id', null);
+    }
+
+    if (stateFilter) {
+      query = query.eq('state', stateFilter);
     }
 
     if (searchTerm.trim()) {
@@ -177,8 +194,9 @@ export default function LeadsPage() {
   }
 
   function refreshAll() {
-    loadLeads(page, pageSize, debouncedSearch, filterFunnelId, sortBy);
+    loadLeads(page, pageSize, debouncedSearch, filterFunnelId, filterState, sortBy);
     loadStats();
+    loadStates();
   }
 
   function toggleSelect(leadId) {
@@ -208,8 +226,9 @@ export default function LeadsPage() {
       resetForm();
       setCreateModalOpen(false);
       setPage(1);
-      loadLeads(1, pageSize, debouncedSearch, filterFunnelId, sortBy);
+      loadLeads(1, pageSize, debouncedSearch, filterFunnelId, filterState, sortBy);
       loadStats();
+      loadStates();
     }
   }
 
@@ -342,13 +361,28 @@ export default function LeadsPage() {
             <option key={f.id} value={f.id}>{f.name}</option>
           ))}
         </select>
-        {(filterFunnelId || search) && (
+        <select
+          className="input"
+          style={{ maxWidth: 160, height: 44 }}
+          value={filterState}
+          onChange={(e) => {
+            setFilterState(e.target.value);
+            setPage(1);
+          }}
+        >
+          <option value="">Todos los estados</option>
+          {states.map((s) => (
+            <option key={s} value={s}>{s}</option>
+          ))}
+        </select>
+        {(filterFunnelId || filterState || search) && (
           <button
             className="btn btn-secondary"
             onClick={() => {
               setSearch('');
               setDebouncedSearch('');
               setFilterFunnelId('');
+              setFilterState('');
               setPage(1);
             }}
           >
