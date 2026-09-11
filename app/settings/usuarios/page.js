@@ -403,7 +403,7 @@ export default function UsuariosPage() {
         onSave={saveAddMinutes}
       />
 
-      <CreateUserModal open={createModalOpen} onClose={() => setCreateModalOpen(false)} templates={templates} />
+      <CreateUserModal open={createModalOpen} onClose={() => setCreateModalOpen(false)} templates={templates} onCreated={refresh} />
     </main>
   );
 }
@@ -546,16 +546,36 @@ function AddMinutesModal({ user, onClose, onSave }) {
   );
 }
 
-// Crear un usuario implica crear su cuenta de auth (auth.admin.createUser),
-// lo cual requiere service_role — no se puede hacer desde el cliente con
-// la anon key. Este modal queda listo visualmente; el submit se conecta a
-// la Edge Function `admin-create-user` cuando la construyamos.
-function CreateUserModal({ open, onClose, templates }) {
+// Crear un usuario implica crear su cuenta de auth (auth.admin.inviteUserByEmail),
+// lo cual requiere service_role -- por eso pasa por la Edge Function
+// admin-create-user en vez de un insert directo desde el cliente.
+function CreateUserModal({ open, onClose, templates, onCreated }) {
   const [form, setForm] = useState({ full_name: '', email: '', role: 'user', plantilla_id: '', llamadas_habilitadas: true, minutos_asignados: 0 });
-  const [notice, setNotice] = useState(null);
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
 
-  function handleSubmit() {
-    setNotice('Falta conectar esto a la Edge Function admin-create-user (pendiente — necesita service_role).');
+  async function handleSubmit() {
+    if (!form.full_name.trim() || !form.email.trim()) {
+      setError('Nombre y email son obligatorios.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+
+    const { data, error: fnError } = await supabase.functions.invoke('admin-create-user', {
+      body: form,
+    });
+
+    setSaving(false);
+
+    if (fnError || data?.error) {
+      setError(data?.error || fnError.message);
+      return;
+    }
+
+    setForm({ full_name: '', email: '', role: 'user', plantilla_id: '', llamadas_habilitadas: true, minutos_asignados: 0 });
+    onCreated?.();
+    onClose();
   }
 
   return (
@@ -582,13 +602,25 @@ function CreateUserModal({ open, onClose, templates }) {
           </select>
         </label>
 
+        <label style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.88rem' }}>
+          <input
+            type="checkbox"
+            checked={form.llamadas_habilitadas}
+            onChange={(e) => setForm({ ...form, llamadas_habilitadas: e.target.checked })}
+          />
+          Llamadas habilitadas
+        </label>
+
         <Input label="Minutos iniciales" type="number" min={0} value={form.minutos_asignados} onChange={(e) => setForm({ ...form, minutos_asignados: e.target.value })} />
 
-        {notice && <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>{notice}</p>}
+        {error && <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>}
+        <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>
+          Se le envía un correo de invitación para que defina su propia contraseña.
+        </p>
 
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-          <Button onClick={handleSubmit}>Crear usuario</Button>
+          <Button onClick={handleSubmit} disabled={saving}>{saving ? 'Creando…' : 'Crear usuario'}</Button>
         </div>
       </div>
     </Modal>

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useState, Fragment } from 'react';
 import { supabase } from '../../../lib/supabase/client';
 import Button from '../../../components/ui/button';
 import Input from '../../../components/ui/input';
@@ -14,9 +14,26 @@ const TABS = [
   { href: '/settings/actividad', label: 'Registro de actividad' },
 ];
 
+const CATEGORY_ORDER = ['leads', 'llamadas', 'comunicacion', 'usuarios'];
+const CATEGORY_LABEL = {
+  leads: 'Leads',
+  llamadas: 'Llamadas',
+  comunicacion: 'Comunicación',
+  usuarios: 'Usuarios',
+};
+
+function sortPermissions(list) {
+  return [...list].sort((a, b) => {
+    const catDiff = CATEGORY_ORDER.indexOf(a.category) - CATEGORY_ORDER.indexOf(b.category);
+    return catDiff !== 0 ? catDiff : a.key.localeCompare(b.key);
+  });
+}
+
 export default function PlantillasPage() {
   const [templates, setTemplates] = useState([]);
   const [usageByTemplate, setUsageByTemplate] = useState({});
+  const [permissions, setPermissions] = useState([]);
+  const [grantedSet, setGrantedSet] = useState(new Set()); // `${template_id}:${permission_key}`
   const [loading, setLoading] = useState(true);
   const [errorMsg, setErrorMsg] = useState(null);
 
@@ -31,9 +48,16 @@ export default function PlantillasPage() {
     setLoading(true);
     setErrorMsg(null);
 
-    const [{ data: templatesData, error: templatesError }, { data: profilesData }] = await Promise.all([
+    const [
+      { data: templatesData, error: templatesError },
+      { data: profilesData },
+      { data: permissionsData },
+      { data: templatePermsData },
+    ] = await Promise.all([
       supabase.from('call_permission_templates').select('id, nombre, llamadas_habilitadas, created_at').order('nombre'),
       supabase.from('profiles').select('plantilla_id'),
+      supabase.from('permissions').select('key, category, label'),
+      supabase.from('template_permissions').select('template_id, permission_key'),
     ]);
 
     if (templatesError) {
@@ -47,8 +71,47 @@ export default function PlantillasPage() {
         if (p.plantilla_id) counts[p.plantilla_id] = (counts[p.plantilla_id] || 0) + 1;
       });
       setUsageByTemplate(counts);
+
+      setPermissions(sortPermissions(permissionsData ?? []));
+      setGrantedSet(new Set((templatePermsData ?? []).map((tp) => `${tp.template_id}:${tp.permission_key}`)));
     }
     setLoading(false);
+  }
+
+  async function togglePermission(templateId, permissionKey, checked) {
+    const cellKey = `${templateId}:${permissionKey}`;
+
+    // Optimista: se ve el cambio de inmediato, se revierte si falla.
+    setGrantedSet((prev) => {
+      const next = new Set(prev);
+      if (checked) next.add(cellKey);
+      else next.delete(cellKey);
+      return next;
+    });
+
+    const { error } = checked
+      ? await supabase.from('template_permissions').insert({ template_id: templateId, permission_key: permissionKey })
+      : await supabase.from('template_permissions').delete().eq('template_id', templateId).eq('permission_key', permissionKey);
+
+    if (error) {
+      setErrorMsg(error.message);
+      setGrantedSet((prev) => {
+        const next = new Set(prev);
+        if (checked) next.delete(cellKey);
+        else next.add(cellKey);
+        return next;
+      });
+      return;
+    }
+
+    // Compatibilidad hacia atrás: llamadas_habilitadas (el booleano
+    // viejo) todavía lo lee la columna "Llamadas" de esta misma tabla
+    // y la pantalla de Usuarios -- se mantiene sincronizado para que
+    // no muestren algo distinto de lo que la plantilla ahora otorga.
+    if (permissionKey === 'llamadas.realizar') {
+      await supabase.from('call_permission_templates').update({ llamadas_habilitadas: checked }).eq('id', templateId);
+      setTemplates((prev) => prev.map((t) => (t.id === templateId ? { ...t, llamadas_habilitadas: checked } : t)));
+    }
   }
 
   async function handleSave(form) {
@@ -117,7 +180,7 @@ export default function PlantillasPage() {
         <div>
           <h1 style={{ fontSize: '1.9rem', fontWeight: 750, letterSpacing: '-0.02em' }}>Plantillas de permisos</h1>
           <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
-            Grupos reutilizables de permisos — por ahora, solo "Llamadas" (punto 9 del doc: sin permisos separados de historial/grabaciones/descargas).
+            Grupos reutilizables de permisos — crea o edita el nombre aquí, y ajusta qué otorga cada una en la matriz de abajo.
           </p>
         </div>
         <Button onClick={() => setEditingTemplate({})}>+ Nueva plantilla</Button>
@@ -136,7 +199,18 @@ export default function PlantillasPage() {
       {loading ? (
         <p>Cargando…</p>
       ) : (
-        <DataTable columns={columns} rows={templates} emptyMessage="Todavía no hay plantillas. Crea la primera con “+ Nueva plantilla”." />
+        <>
+          <DataTable columns={columns} rows={templates} emptyMessage="Todavía no hay plantillas. Crea la primera con “+ Nueva plantilla”." />
+
+          {templates.length > 0 && (
+            <PermissionsMatrix
+              templates={templates}
+              permissions={permissions}
+              grantedSet={grantedSet}
+              onToggle={togglePermission}
+            />
+          )}
+        </>
       )}
 
       <TemplateModal template={editingTemplate} onClose={() => setEditingTemplate(null)} onSave={handleSave} />
@@ -209,6 +283,74 @@ function TemplateModal({ template, onClose, onSave }) {
         </div>
       </div>
     </Modal>
+  );
+}
+
+function PermissionsMatrix({ templates, permissions, grantedSet, onToggle }) {
+  let lastCategory = null;
+
+  return (
+    <div className="card" style={{ marginTop: '1.25rem', overflowX: 'auto' }}>
+      <h2 style={{ fontSize: '1rem', marginBottom: '0.25rem' }}>Matriz de permisos</h2>
+      <p style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+        Cada casilla se guarda al tocarla — no hace falta un botón aparte de "Guardar".
+      </p>
+
+      <table style={{ width: '100%', borderCollapse: 'collapse', fontSize: '0.85rem' }}>
+        <thead>
+          <tr>
+            <th style={{ textAlign: 'left', padding: '0.5rem 0.75rem', borderBottom: '1px solid var(--color-border)' }}>Permiso</th>
+            {templates.map((t) => (
+              <th key={t.id} style={{ textAlign: 'center', padding: '0.5rem 0.75rem', borderBottom: '1px solid var(--color-border)', whiteSpace: 'nowrap' }}>
+                {t.nombre}
+              </th>
+            ))}
+          </tr>
+        </thead>
+        <tbody>
+          {permissions.map((perm) => {
+            const showCategoryHeader = perm.category !== lastCategory;
+            lastCategory = perm.category;
+            return (
+              <Fragment key={perm.key}>
+                {showCategoryHeader && (
+                  <tr key={`cat-${perm.category}`}>
+                    <td
+                      colSpan={templates.length + 1}
+                      style={{
+                        padding: '0.6rem 0.75rem 0.3rem',
+                        fontSize: '0.75rem',
+                        fontWeight: 700,
+                        textTransform: 'uppercase',
+                        letterSpacing: '0.03em',
+                        color: 'var(--color-text-tertiary)',
+                      }}
+                    >
+                      {CATEGORY_LABEL[perm.category] || perm.category}
+                    </td>
+                  </tr>
+                )}
+                <tr key={perm.key}>
+                  <td style={{ padding: '0.4rem 0.75rem', borderBottom: '1px solid var(--color-border)' }}>{perm.label}</td>
+                  {templates.map((t) => {
+                    const checked = grantedSet.has(`${t.id}:${perm.key}`);
+                    return (
+                      <td key={t.id} style={{ textAlign: 'center', padding: '0.4rem 0.75rem', borderBottom: '1px solid var(--color-border)' }}>
+                        <input
+                          type="checkbox"
+                          checked={checked}
+                          onChange={(e) => onToggle(t.id, perm.key, e.target.checked)}
+                        />
+                      </td>
+                    );
+                  })}
+                </tr>
+              </Fragment>
+            );
+          })}
+        </tbody>
+      </table>
+    </div>
   );
 }
 
