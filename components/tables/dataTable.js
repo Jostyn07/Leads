@@ -3,7 +3,7 @@
 // rows: array de objetos; cada uno debe tener un `id` único.
 export default function DataTable({ columns, rows, emptyMessage = 'Sin resultados.', renderRowExtra }) {
   return (
-    <div className="card" style={{ padding: 0, overflow: 'hidden' }}>
+    <div className="card" style={{ padding: 0 }}>
       <table style={{ width: '100%', borderCollapse: 'collapse' }}>
         <thead>
           <tr style={{ textAlign: 'left', borderBottom: '1px solid var(--color-border)' }}>
