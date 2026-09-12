@@ -32,14 +32,16 @@ export default function AuthWatcher() {
     if (pathname === '/login' || pathname === '/') return;
 
     let channel = null;
+    let mounted = true;
 
     (async () => {
       const {
         data: { session },
       } = await supabase.auth.getSession();
-      if (!session?.user) return;
+      if (!mounted || !session?.user) return;
 
       await checkEstadoOnce(session.user.id);
+      if (!mounted) return;
 
       // A partir de acá, nos enteramos de un cambio a inactivo en
       // tiempo real (Realtime), sin volver a llamar a getUser() ni
@@ -59,6 +61,12 @@ export default function AuthWatcher() {
     })();
 
     return () => {
+      // Corta cualquier ejecución huérfana que siga en curso (React
+      // Strict Mode monta/desmonta/vuelve a montar cada efecto una vez
+      // en desarrollo) -- sin esto, la ejecución vieja terminaba de
+      // crear su canal DESPUÉS de que su limpieza ya había corrido,
+      // chocando con el canal de la segunda ejecución.
+      mounted = false;
       if (channel) supabase.removeChannel(channel);
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps

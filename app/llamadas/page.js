@@ -376,13 +376,9 @@ export default function LlamadasPage() {
         <CallInProgress
           call={activeCall}
           onClose={() => setActiveCall(null)}
-          onSaveResult={async ({ resultado, duracionSegundos }) => {
-            // TODO: cuando exista el registro real de la llamada (creado al
-            // conectar con Telnyx), esto debe hacer un UPDATE de calls con
-            // resultado + duracion_segundos + estado_tecnico='finalizada' en
-            // vez de solo loguear — por ahora no hay fila que actualizar
-            // porque la llamada nunca se marcó de verdad con Telnyx.
-            console.log('Resultado de llamada (pendiente de persistir):', resultado, duracionSegundos);
+          onSaveResult={async () => {
+            // CallInProgress ya insertó la fila real en `calls` con los
+            // IDs de Telnyx -- acá solo hace falta refrescar la lista.
             loadCalls();
             loadStats();
           }}

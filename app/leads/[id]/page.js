@@ -259,11 +259,10 @@ export default function LeadDetailPage() {
         <CallInProgress
           call={activeCall}
           onClose={() => setActiveCall(null)}
-          onSaveResult={async ({ resultado, duracionSegundos }) => {
-            // TODO: igual que en app/llamadas/page.js — falta el Voice SDK
-            // de Telnyx para que exista una fila real en `calls` que
-            // actualizar con este resultado y duración.
-            console.log('Resultado de llamada (pendiente de persistir):', resultado, duracionSegundos);
+          onSaveResult={async () => {
+            // CallInProgress ya insertó la fila real en `calls` -- si el
+            // usuario vuelve a abrir la pestaña Llamadas del lead, ya la
+            // va a ver (LeadCallsTab la recarga al montar).
           }}
         />
       )}

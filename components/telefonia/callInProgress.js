@@ -34,6 +34,18 @@ function formatTimer(totalSeconds) {
 
 const KEYPAD_KEYS = ['1', '2', '3', '4', '5', '6', '7', '8', '9', '*', '0', '#'];
 
+// Telnyx exige E.164 (+1XXXXXXXXXX) -- tus leads guardan el teléfono
+// como 10 dígitos planos, sin "+1". Sin esto, Telnyx rechaza la
+// llamada casi al instante (se ve como si "colgara sola" enseguida).
+function toE164(numero) {
+  const raw = (numero || '').trim();
+  if (raw.startsWith('+')) return raw;
+  const digits = raw.replace(/\D/g, '');
+  if (digits.length === 10) return `+1${digits}`;
+  if (digits.length === 11 && digits.startsWith('1')) return `+${digits}`;
+  return `+${digits}`;
+}
+
 // Requiere NEXT_PUBLIC_TELNYX_PHONE_NUMBER en tu .env.local (mismo valor
 // que el secret TELNYX_PHONE_NUMBER de la Edge Function) -- es solo un
 // número de teléfono, no es sensible, por eso puede ser público.
@@ -56,6 +68,8 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
   const telnyxIDsRef = useRef(null); // capturado cuando el estado pasa a 'active'
   const myIdRef = useRef(null);
   const horaInicioRef = useRef(null);
+  const notificationHandlerRef = useRef(null);
+  const clientRef = useRef(null);
 
   // Coloca la llamada real al montar.
   useEffect(() => {
@@ -68,25 +82,30 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
         } = await supabase.auth.getUser();
         myIdRef.current = user?.id ?? null;
 
-        const client = await getTelnyxClient();
+        // Se revisa permiso/minutos ANTES de cada llamada individual,
+        // no solo la primera de la sesión -- getTelnyxClient() reutiliza
+        // la conexión WebRTC entre llamadas, así que sin este chequeo
+        // aparte, alguien podría seguir llamando después de quedarse
+        // sin minutos a mitad de sesión.
+        const { data: canCall, error: canCallError } = await supabase.rpc('can_make_call');
         if (cancelled) return;
-
-        let telnyxCall = client.newCall({
-          destinationNumber: call.numero,
-          callerNumber: CALLER_NUMBER,
-        });
-
-        // Según la versión del SDK, newCall() puede devolver el objeto
-        // Call directamente o una Promise que resuelve a él -- se
-        // soportan ambos casos sin depender de la versión exacta instalada.
-        if (telnyxCall && typeof telnyxCall.then === 'function') {
-          telnyxCall = await telnyxCall;
+        if (canCallError || !canCall?.allowed) {
+          setErrorMsg(canCall?.reason || canCallError?.message || 'No se pudo validar el permiso para llamar.');
+          setPhase('error');
+          return;
         }
 
-        telnyxCallRef.current = telnyxCall;
-        horaInicioRef.current = new Date().toISOString();
+        const client = await getTelnyxClient();
+        if (cancelled) return;
+        clientRef.current = client;
 
-        telnyxCall.on('telnyx.notification', (notification) => {
+        // Escuchamos en el CLIENTE, no en el objeto call -- la versión
+        // instalada del SDK no expone call.on() a pesar de que la
+        // documentación de Telnyx lo muestre así (confirmado con el
+        // error real: "telnyxCall.on is not a function"). El patrón
+        // client.on('telnyx.notification', ...) sí está confirmado
+        // (es el mismo que usan para llamadas entrantes).
+        function handleNotification(notification) {
           if (notification.type !== 'callUpdate') return;
           const telnyxState = notification.call.state;
           const mapped = TELNYX_STATE_MAP[telnyxState] || 'iniciando';
@@ -103,7 +122,24 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
             clearInterval(intervalRef.current);
             setPhase((p) => (p === 'llamada' ? 'resultado' : p));
           }
+        }
+
+        client.on('telnyx.notification', handleNotification);
+        notificationHandlerRef.current = handleNotification;
+
+        let telnyxCall = client.newCall({
+          destinationNumber: toE164(call.numero),
+          callerNumber: toE164(CALLER_NUMBER),
         });
+
+        // Por si acaso, se soporta también que newCall() devuelva una
+        // Promise en vez del objeto Call directamente.
+        if (telnyxCall && typeof telnyxCall.then === 'function') {
+          telnyxCall = await telnyxCall;
+        }
+
+        telnyxCallRef.current = telnyxCall;
+        horaInicioRef.current = new Date().toISOString();
       } catch (err) {
         if (!cancelled) {
           setErrorMsg(err?.message || 'No se pudo iniciar la llamada.');
@@ -115,6 +151,9 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
     return () => {
       cancelled = true;
       clearInterval(intervalRef.current);
+      if (clientRef.current && notificationHandlerRef.current) {
+        clientRef.current.off('telnyx.notification', notificationHandlerRef.current);
+      }
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
