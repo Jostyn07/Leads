@@ -71,10 +71,18 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
         const client = await getTelnyxClient();
         if (cancelled) return;
 
-        const telnyxCall = client.newCall({
+        let telnyxCall = client.newCall({
           destinationNumber: call.numero,
           callerNumber: CALLER_NUMBER,
         });
+
+        // Según la versión del SDK, newCall() puede devolver el objeto
+        // Call directamente o una Promise que resuelve a él -- se
+        // soportan ambos casos sin depender de la versión exacta instalada.
+        if (telnyxCall && typeof telnyxCall.then === 'function') {
+          telnyxCall = await telnyxCall;
+        }
+
         telnyxCallRef.current = telnyxCall;
         horaInicioRef.current = new Date().toISOString();
 
