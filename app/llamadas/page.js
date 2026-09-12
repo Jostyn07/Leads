@@ -378,10 +378,10 @@ export default function LlamadasPage() {
           onClose={() => setActiveCall(null)}
           onSaveResult={async ({ resultado, duracionSegundos }) => {
             // TODO: cuando exista el registro real de la llamada (creado al
-            // conectar con Twilio), esto debe hacer un UPDATE de calls con
+            // conectar con Telnyx), esto debe hacer un UPDATE de calls con
             // resultado + duracion_segundos + estado_tecnico='finalizada' en
             // vez de solo loguear — por ahora no hay fila que actualizar
-            // porque la llamada nunca se marcó de verdad con Twilio.
+            // porque la llamada nunca se marcó de verdad con Telnyx.
             console.log('Resultado de llamada (pendiente de persistir):', resultado, duracionSegundos);
             loadCalls();
             loadStats();
@@ -404,7 +404,7 @@ function StatCard({ icon, value, label, color }) {
   );
 }
 
-// Marcar un número y llamar requiere el Voice SDK de Twilio (WebRTC) +
+// Marcar un número y llamar requiere el SDK WebRTC de Telnyx +
 // la Edge Function que genera el Access Token — pendiente hasta que
 // retomemos esa fase. Por ahora, "Llamar" abre la ventana de Llamada en
 // curso directamente (sin conexión real) para poder ver y probar esa
@@ -424,7 +424,7 @@ function NuevaLlamadaModal({ open, onClose, onStartCall }) {
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <Input label="Número de teléfono" placeholder="+1 305 555 1234" value={numero} onChange={(e) => setNumero(e.target.value)} />
         <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>
-          La ventana de llamada se abre para probar la interfaz — todavía no marca de verdad (falta el Voice SDK de Twilio).
+          La ventana de llamada se abre para probar la interfaz — todavía no marca de verdad (falta el SDK WebRTC de Telnyx).
         </p>
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>

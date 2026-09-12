@@ -261,7 +261,7 @@ export default function LeadDetailPage() {
           onClose={() => setActiveCall(null)}
           onSaveResult={async ({ resultado, duracionSegundos }) => {
             // TODO: igual que en app/llamadas/page.js — falta el Voice SDK
-            // de Twilio para que exista una fila real en `calls` que
+            // de Telnyx para que exista una fila real en `calls` que
             // actualizar con este resultado y duración.
             console.log('Resultado de llamada (pendiente de persistir):', resultado, duracionSegundos);
           }}
