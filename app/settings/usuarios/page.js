@@ -357,7 +357,7 @@ export default function UsuariosPage() {
             </p>
           )}
         </div>
-        {!isOwner && <Button onClick={() => setCreateModalOpen(true)}>+ Nuevo usuario</Button>}
+        <Button onClick={() => setCreateModalOpen(true)}>+ Nuevo usuario</Button>
       </div>
 
       <div className="tabs-bar">
@@ -463,7 +463,15 @@ export default function UsuariosPage() {
         onSave={saveAddMinutes}
       />
 
-      <CreateUserModal open={createModalOpen} onClose={() => setCreateModalOpen(false)} templates={templates} phoneNumbers={phoneNumbers} onCreated={refresh} />
+      <CreateUserModal
+        open={createModalOpen}
+        onClose={() => setCreateModalOpen(false)}
+        templates={templates}
+        phoneNumbers={phoneNumbers}
+        organizations={organizations}
+        isOwner={isOwner}
+        onCreated={refresh}
+      />
     </main>
   );
 }
@@ -680,8 +688,8 @@ function AddMinutesModal({ user, onClose, onSave }) {
 // Crear un usuario implica crear su cuenta de auth (auth.admin.inviteUserByEmail),
 // lo cual requiere service_role -- por eso pasa por la Edge Function
 // admin-create-user en vez de un insert directo desde el cliente.
-function CreateUserModal({ open, onClose, templates, phoneNumbers, onCreated }) {
-  const [form, setForm] = useState({ full_name: '', email: '', role: 'user', plantilla_id: '', llamadas_habilitadas: true, minutos_asignados: 0 });
+function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations, isOwner, onCreated }) {
+  const [form, setForm] = useState({ full_name: '', email: '', role: 'user', plantilla_id: '', llamadas_habilitadas: true, minutos_asignados: 0, organization_id: '' });
   const [selectedNumeroIds, setSelectedNumeroIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -700,6 +708,10 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, onCreated }) 
       setError('Nombre y email son obligatorios.');
       return;
     }
+    if (isOwner && !form.organization_id) {
+      setError('Elige a qué organización pertenece este usuario.');
+      return;
+    }
     setSaving(true);
     setError(null);
 
@@ -714,7 +726,7 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, onCreated }) 
       return;
     }
 
-    setForm({ full_name: '', email: '', role: 'user', plantilla_id: '', llamadas_habilitadas: true, minutos_asignados: 0 });
+    setForm({ full_name: '', email: '', role: 'user', plantilla_id: '', llamadas_habilitadas: true, minutos_asignados: 0, organization_id: '' });
     setSelectedNumeroIds(new Set());
     onCreated?.();
     onClose();
@@ -726,13 +738,30 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, onCreated }) 
         <Input label="Nombre completo" value={form.full_name} onChange={(e) => setForm({ ...form, full_name: e.target.value })} />
         <Input label="Email" type="email" value={form.email} onChange={(e) => setForm({ ...form, email: e.target.value })} />
 
-        <label style={{ display: 'block' }}>
-          <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Rol</span>
-          <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
-            <option value="user">Agente</option>
-            <option value="admin">Administrador</option>
-          </select>
-        </label>
+        {isOwner ? (
+          <>
+            <label style={{ display: 'block' }}>
+              <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Organización</span>
+              <select className="input" value={form.organization_id} onChange={(e) => setForm({ ...form, organization_id: e.target.value })}>
+                <option value="">Selecciona una organización</option>
+                {organizations.map((o) => (
+                  <option key={o.id} value={o.id}>{o.name}</option>
+                ))}
+              </select>
+            </label>
+            <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>
+              Como dueño, los usuarios que crees siempre quedan como Administrador de esa organización — para agentes, pídele al administrador de la organización que los cree él.
+            </p>
+          </>
+        ) : (
+          <label style={{ display: 'block' }}>
+            <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Rol</span>
+            <select className="input" value={form.role} onChange={(e) => setForm({ ...form, role: e.target.value })}>
+              <option value="user">Agente</option>
+              <option value="admin">Administrador</option>
+            </select>
+          </label>
+        )}
 
         <label style={{ display: 'block' }}>
           <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Plantilla</span>
