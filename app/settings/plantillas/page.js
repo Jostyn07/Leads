@@ -10,6 +10,7 @@ import DataTable from '../../../components/tables/dataTable';
 
 const TABS = [
   { href: '/settings/usuarios', label: 'Usuarios' },
+  { href: '/settings/numeros', label: 'Números' },
   { href: '/settings/plantillas', label: 'Plantillas de permisos' },
   { href: '/settings/actividad', label: 'Registro de actividad' },
 ];

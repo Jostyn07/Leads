@@ -46,13 +46,9 @@ function toE164(numero) {
   return `+${digits}`;
 }
 
-// Requiere NEXT_PUBLIC_TELNYX_PHONE_NUMBER en tu .env.local (mismo valor
-// que el secret TELNYX_PHONE_NUMBER de la Edge Function) -- es solo un
-// número de teléfono, no es sensible, por eso puede ser público.
-const CALLER_NUMBER = process.env.NEXT_PUBLIC_TELNYX_PHONE_NUMBER;
-
 export default function CallInProgress({ call, onClose, onSaveResult }) {
-  const [phase, setPhase] = useState('llamada'); // 'llamada' | 'resultado' | 'error'
+  // 'cargando_numeros' -> (auto o) 'elegir_numero' -> 'llamada' -> 'resultado' | 'error'
+  const [phase, setPhase] = useState('cargando_numeros');
   const [status, setStatus] = useState('iniciando');
   const [errorMsg, setErrorMsg] = useState(null);
   const [elapsed, setElapsed] = useState(0);
@@ -62,6 +58,7 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
   const [minimized, setMinimized] = useState(false);
   const [resultado, setResultado] = useState(null);
   const [saving, setSaving] = useState(false);
+  const [myNumbers, setMyNumbers] = useState([]); // números asignados a este operador
 
   const intervalRef = useRef(null);
   const telnyxCallRef = useRef(null);
@@ -77,91 +74,132 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
   // vez de un INSERT nuevo cuando ya existe.
   const callRowIdRef = useRef(null);
 
-  // Coloca la llamada real al montar.
+  // Trae los números asignados al operador actual -- reemplaza el
+  // NEXT_PUBLIC_TELNYX_PHONE_NUMBER fijo de antes. Con 0 no se puede
+  // llamar, con 1 se usa directo, con 2+ se pregunta cuál usar.
   useEffect(() => {
     let cancelled = false;
 
     (async () => {
-      try {
-        const {
-          data: { user },
-        } = await supabase.auth.getUser();
-        myIdRef.current = user?.id ?? null;
+      const {
+        data: { user },
+      } = await supabase.auth.getUser();
+      if (cancelled) return;
+      myIdRef.current = user?.id ?? null;
 
-        // Se revisa permiso/minutos ANTES de cada llamada individual,
-        // no solo la primera de la sesión -- getTelnyxClient() reutiliza
-        // la conexión WebRTC entre llamadas, así que sin este chequeo
-        // aparte, alguien podría seguir llamando después de quedarse
-        // sin minutos a mitad de sesión.
-        const { data: canCall, error: canCallError } = await supabase.rpc('can_make_call');
-        if (cancelled) return;
-        if (canCallError || !canCall?.allowed) {
-          setErrorMsg(canCall?.reason || canCallError?.message || 'No se pudo validar el permiso para llamar.');
-          setPhase('error');
-          return;
-        }
+      if (!user) {
+        setErrorMsg('Tu sesión expiró, vuelve a iniciar sesión.');
+        setPhase('error');
+        return;
+      }
 
-        const client = await getTelnyxClient();
-        if (cancelled) return;
-        clientRef.current = client;
+      const { data, error } = await supabase
+        .from('user_phone_numbers')
+        .select('phone_numbers ( id, numero, etiqueta, activo )')
+        .eq('user_id', user.id);
 
-        // Escuchamos en el CLIENTE, no en el objeto call -- la versión
-        // instalada del SDK no expone call.on() a pesar de que la
-        // documentación de Telnyx lo muestre así (confirmado con el
-        // error real: "telnyxCall.on is not a function"). El patrón
-        // client.on('telnyx.notification', ...) sí está confirmado
-        // (es el mismo que usan para llamadas entrantes).
-        function handleNotification(notification) {
-          if (notification.type !== 'callUpdate') return;
-          const telnyxState = notification.call.state;
-          const mapped = TELNYX_STATE_MAP[telnyxState] || 'iniciando';
-          setStatus(mapped);
+      if (cancelled) return;
 
-          if (telnyxState === 'active' && !telnyxIDsRef.current) {
-            telnyxIDsRef.current = notification.call.telnyxIDs;
-          }
+      if (error) {
+        setErrorMsg('No se pudieron cargar tus números asignados: ' + error.message);
+        setPhase('error');
+        return;
+      }
 
-          // El otro lado colgó (o hubo un fallo de red) sin que el
-          // agente haya tocado "Finalizar llamada" -- igual pasamos a
-          // la pantalla de resultado, no se pierde el registro.
-          if (telnyxState === 'hangup' || telnyxState === 'destroy') {
-            clearInterval(intervalRef.current);
-            setPhase((p) => (p === 'llamada' ? 'resultado' : p));
-          }
-        }
+      const activos = (data ?? []).map((r) => r.phone_numbers).filter((n) => n && n.activo);
+      setMyNumbers(activos);
 
-        client.on('telnyx.notification', handleNotification);
-        notificationHandlerRef.current = handleNotification;
-
-        let telnyxCall = client.newCall({
-          destinationNumber: toE164(call.numero),
-          callerNumber: toE164(CALLER_NUMBER),
-        });
-
-        // Por si acaso, se soporta también que newCall() devuelva una
-        // Promise en vez del objeto Call directamente.
-        if (telnyxCall && typeof telnyxCall.then === 'function') {
-          telnyxCall = await telnyxCall;
-        }
-
-        telnyxCallRef.current = telnyxCall;
-        horaInicioRef.current = new Date().toISOString();
-      } catch (err) {
-        if (!cancelled) {
-          setErrorMsg(err?.message || 'No se pudo iniciar la llamada.');
-          setPhase('error');
-        }
+      if (activos.length === 0) {
+        setErrorMsg('No tienes ningún número asignado para hacer llamadas. Pídele a tu administrador que te asigne uno en Configuración → Usuarios.');
+        setPhase('error');
+      } else if (activos.length === 1) {
+        placeCall(activos[0].numero);
+      } else {
+        setPhase('elegir_numero');
       }
     })();
 
     return () => {
       cancelled = true;
+    };
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
+  // Coloca la llamada real -- se llama automático si solo hay un número
+  // asignado, o desde el botón de la pantalla "elegir_numero" si hay varios.
+  async function placeCall(callerNumero) {
+    setPhase('llamada');
+
+    try {
+      // Se revisa permiso/minutos ANTES de cada llamada individual,
+      // no solo la primera de la sesión -- getTelnyxClient() reutiliza
+      // la conexión WebRTC entre llamadas, así que sin este chequeo
+      // aparte, alguien podría seguir llamando después de quedarse
+      // sin minutos a mitad de sesión.
+      const { data: canCall, error: canCallError } = await supabase.rpc('can_make_call');
+      if (canCallError || !canCall?.allowed) {
+        setErrorMsg(canCall?.reason || canCallError?.message || 'No se pudo validar el permiso para llamar.');
+        setPhase('error');
+        return;
+      }
+
+      const client = await getTelnyxClient();
+      clientRef.current = client;
+
+      // Escuchamos en el CLIENTE, no en el objeto call -- la versión
+      // instalada del SDK no expone call.on() a pesar de que la
+      // documentación de Telnyx lo muestre así (confirmado con el
+      // error real: "telnyxCall.on is not a function"). El patrón
+      // client.on('telnyx.notification', ...) sí está confirmado
+      // (es el mismo que usan para llamadas entrantes).
+      function handleNotification(notification) {
+        if (notification.type !== 'callUpdate') return;
+        const telnyxState = notification.call.state;
+        const mapped = TELNYX_STATE_MAP[telnyxState] || 'iniciando';
+        setStatus(mapped);
+
+        if (telnyxState === 'active' && !telnyxIDsRef.current) {
+          telnyxIDsRef.current = notification.call.telnyxIDs;
+        }
+
+        // El otro lado colgó (o hubo un fallo de red) sin que el
+        // agente haya tocado "Finalizar llamada" -- igual pasamos a
+        // la pantalla de resultado, no se pierde el registro.
+        if (telnyxState === 'hangup' || telnyxState === 'destroy') {
+          clearInterval(intervalRef.current);
+          setPhase((p) => (p === 'llamada' ? 'resultado' : p));
+        }
+      }
+
+      client.on('telnyx.notification', handleNotification);
+      notificationHandlerRef.current = handleNotification;
+
+      let telnyxCall = client.newCall({
+        destinationNumber: toE164(call.numero),
+        callerNumber: toE164(callerNumero),
+      });
+
+      // Por si acaso, se soporta también que newCall() devuelva una
+      // Promise en vez del objeto Call directamente.
+      if (telnyxCall && typeof telnyxCall.then === 'function') {
+        telnyxCall = await telnyxCall;
+      }
+
+      telnyxCallRef.current = telnyxCall;
+      horaInicioRef.current = new Date().toISOString();
+    } catch (err) {
+      setErrorMsg(err?.message || 'No se pudo iniciar la llamada.');
+      setPhase('error');
+    }
+  }
+
+  useEffect(() => {
+    return () => {
       clearInterval(intervalRef.current);
       if (clientRef.current && notificationHandlerRef.current) {
         clientRef.current.off('telnyx.notification', notificationHandlerRef.current);
       }
     };
-    // eslint-disable-next-line react-hooks/exhaustive-deps
   }, []);
 
   useEffect(() => {
@@ -342,7 +380,31 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
           <button onClick={handleClose} aria-label="Cerrar" style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: '1rem', padding: 4 }}>✕</button>
         </div>
 
-        {phase === 'error' ? (
+        {phase === 'cargando_numeros' ? (
+          <div style={{ textAlign: 'center', padding: '1rem 0' }}>
+            <p style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>Preparando llamada…</p>
+          </div>
+        ) : phase === 'elegir_numero' ? (
+          <div>
+            <p style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 4 }}>¿Desde qué número llamas?</p>
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)', marginBottom: '1rem' }}>
+              Tienes varios números asignados — elige cuál usar como caller ID para esta llamada.
+            </p>
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+              {myNumbers.map((n) => (
+                <button
+                  key={n.id}
+                  className="btn btn-secondary"
+                  onClick={() => placeCall(n.numero)}
+                  style={{ justifyContent: 'flex-start', textAlign: 'left', padding: '0.65rem 0.85rem' }}
+                >
+                  <div style={{ fontWeight: 600 }}>{n.numero}</div>
+                  {n.etiqueta && <div style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)' }}>{n.etiqueta}</div>}
+                </button>
+              ))}
+            </div>
+          </div>
+        ) : phase === 'error' ? (
           <div style={{ textAlign: 'center', padding: '1rem 0' }}>
             <p style={{ fontSize: '0.95rem', fontWeight: 600, marginBottom: 8 }}>No se pudo iniciar la llamada</p>
             <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>{errorMsg}</p>

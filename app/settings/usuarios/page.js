@@ -11,6 +11,7 @@ import DataTable from '../../../components/tables/dataTable';
 
 const TABS = [
   { href: '/settings/usuarios', label: 'Usuarios' },
+  { href: '/settings/numeros', label: 'Números' },
   { href: '/settings/plantillas', label: 'Plantillas de permisos' },
   { href: '/settings/actividad', label: 'Registro de actividad' },
 ];
@@ -45,6 +46,7 @@ export default function UsuariosPage() {
 
   const [templates, setTemplates] = useState([]);
   const [organizations, setOrganizations] = useState([]);
+  const [phoneNumbers, setPhoneNumbers] = useState([]);
   const [isOwner, setIsOwner] = useState(false);
   const [stats, setStats] = useState(null);
 
@@ -83,12 +85,21 @@ export default function UsuariosPage() {
 
   useEffect(() => {
     loadTemplates();
+    loadPhoneNumbers();
     loadStats();
   }, []);
 
   async function loadTemplates() {
     const { data } = await supabase.from('call_permission_templates').select('id, nombre').order('nombre');
     setTemplates(data ?? []);
+  }
+
+  async function loadPhoneNumbers() {
+    // Solo los activos -- uno desactivado no debería poder asignarse a
+    // usuarios nuevos, aunque los que ya lo tienen asignado lo conservan
+    // (desactivar no borra la asignación, solo oculta la opción a futuro).
+    const { data } = await supabase.from('phone_numbers').select('id, numero, etiqueta').eq('activo', true).order('numero');
+    setPhoneNumbers(data ?? []);
   }
 
   // Los usuarios habitualmente son pocos (decenas, no miles), así que
@@ -440,6 +451,7 @@ export default function UsuariosPage() {
         user={editingUser}
         templates={templates}
         organizations={organizations}
+        phoneNumbers={phoneNumbers}
         isOwner={isOwner}
         onClose={() => setEditingUser(null)}
         onSave={saveEdit}
@@ -451,7 +463,7 @@ export default function UsuariosPage() {
         onSave={saveAddMinutes}
       />
 
-      <CreateUserModal open={createModalOpen} onClose={() => setCreateModalOpen(false)} templates={templates} onCreated={refresh} />
+      <CreateUserModal open={createModalOpen} onClose={() => setCreateModalOpen(false)} templates={templates} phoneNumbers={phoneNumbers} onCreated={refresh} />
     </main>
   );
 }
@@ -468,8 +480,9 @@ function StatCard({ icon, value, label, color }) {
   );
 }
 
-function EditUserModal({ user, templates, organizations, isOwner, onClose, onSave }) {
+function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, onClose, onSave }) {
   const [form, setForm] = useState(null);
+  const [selectedNumeroIds, setSelectedNumeroIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
@@ -486,18 +499,58 @@ function EditUserModal({ user, templates, organizations, isOwner, onClose, onSav
         organization_id: user.organization_id || '',
       });
       setError(null);
+
+      supabase
+        .from('user_phone_numbers')
+        .select('phone_number_id')
+        .eq('user_id', user.id)
+        .then(({ data }) => setSelectedNumeroIds(new Set((data ?? []).map((r) => r.phone_number_id))));
     } else {
       setForm(null);
+      setSelectedNumeroIds(new Set());
     }
   }, [user]);
 
   if (!user || !form) return null;
 
+  function toggleNumero(id) {
+    setSelectedNumeroIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
+
   async function handleSave() {
     setSaving(true);
+
     const err = await onSave(form);
+    if (err) {
+      setSaving(false);
+      setError(err.message);
+      return;
+    }
+
+    // Los números se guardan aparte del resto del perfil -- es una
+    // tabla distinta (user_phone_numbers), así que se sincroniza por
+    // diferencia: qué se agregó y qué se quitó desde que se abrió el modal.
+    const { data: current } = await supabase.from('user_phone_numbers').select('phone_number_id').eq('user_id', user.id);
+    const currentIds = new Set((current ?? []).map((r) => r.phone_number_id));
+
+    const toAdd = [...selectedNumeroIds].filter((id) => !currentIds.has(id));
+    const toRemove = [...currentIds].filter((id) => !selectedNumeroIds.has(id));
+
+    if (toAdd.length > 0) {
+      await supabase.from('user_phone_numbers').insert(toAdd.map((phone_number_id) => ({ user_id: user.id, phone_number_id })));
+    }
+    if (toRemove.length > 0) {
+      await supabase.from('user_phone_numbers').delete().eq('user_id', user.id).in('phone_number_id', toRemove);
+    }
+
     setSaving(false);
-    if (err) setError(err.message);
+    // onSave ya cierra el modal y refresca la lista si todo salió bien
+    // (ver saveEdit en el componente padre).
   }
 
   return (
@@ -559,6 +612,24 @@ function EditUserModal({ user, templates, organizations, isOwner, onClose, onSav
           onChange={(e) => setForm({ ...form, minutos_asignados: e.target.value })}
         />
 
+        <div>
+          <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Números para llamar (caller ID)</span>
+          {phoneNumbers.length === 0 ? (
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
+              No hay números en el catálogo todavía — agrégalos en la pestaña "Números".
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 160, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '0.5rem 0.75rem' }}>
+              {phoneNumbers.map((n) => (
+                <label key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem' }}>
+                  <input type="checkbox" checked={selectedNumeroIds.has(n.id)} onChange={() => toggleNumero(n.id)} />
+                  {n.numero}{n.etiqueta ? ` — ${n.etiqueta}` : ''}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
+
         {error && <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>}
 
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
@@ -609,10 +680,20 @@ function AddMinutesModal({ user, onClose, onSave }) {
 // Crear un usuario implica crear su cuenta de auth (auth.admin.inviteUserByEmail),
 // lo cual requiere service_role -- por eso pasa por la Edge Function
 // admin-create-user en vez de un insert directo desde el cliente.
-function CreateUserModal({ open, onClose, templates, onCreated }) {
+function CreateUserModal({ open, onClose, templates, phoneNumbers, onCreated }) {
   const [form, setForm] = useState({ full_name: '', email: '', role: 'user', plantilla_id: '', llamadas_habilitadas: true, minutos_asignados: 0 });
+  const [selectedNumeroIds, setSelectedNumeroIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  function toggleNumero(id) {
+    setSelectedNumeroIds((prev) => {
+      const next = new Set(prev);
+      if (next.has(id)) next.delete(id);
+      else next.add(id);
+      return next;
+    });
+  }
 
   async function handleSubmit() {
     if (!form.full_name.trim() || !form.email.trim()) {
@@ -623,7 +704,7 @@ function CreateUserModal({ open, onClose, templates, onCreated }) {
     setError(null);
 
     const { data, error: fnError } = await supabase.functions.invoke('admin-create-user', {
-      body: form,
+      body: { ...form, phone_number_ids: [...selectedNumeroIds] },
     });
 
     setSaving(false);
@@ -634,6 +715,7 @@ function CreateUserModal({ open, onClose, templates, onCreated }) {
     }
 
     setForm({ full_name: '', email: '', role: 'user', plantilla_id: '', llamadas_habilitadas: true, minutos_asignados: 0 });
+    setSelectedNumeroIds(new Set());
     onCreated?.();
     onClose();
   }
@@ -672,6 +754,24 @@ function CreateUserModal({ open, onClose, templates, onCreated }) {
         </label>
 
         <Input label="Minutos iniciales" type="number" min={0} value={form.minutos_asignados} onChange={(e) => setForm({ ...form, minutos_asignados: e.target.value })} />
+
+        <div>
+          <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Números para llamar (caller ID)</span>
+          {phoneNumbers.length === 0 ? (
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
+              No hay números en el catálogo todavía — agrégalos en la pestaña "Números".
+            </p>
+          ) : (
+            <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 160, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '0.5rem 0.75rem' }}>
+              {phoneNumbers.map((n) => (
+                <label key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem' }}>
+                  <input type="checkbox" checked={selectedNumeroIds.has(n.id)} onChange={() => toggleNumero(n.id)} />
+                  {n.numero}{n.etiqueta ? ` — ${n.etiqueta}` : ''}
+                </label>
+              ))}
+            </div>
+          )}
+        </div>
 
         {error && <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>}
         <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>
