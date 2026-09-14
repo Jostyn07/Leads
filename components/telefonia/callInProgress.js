@@ -70,6 +70,12 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
   const horaInicioRef = useRef(null);
   const notificationHandlerRef = useRef(null);
   const clientRef = useRef(null);
+  // id de la fila en `calls` creada apenas la llamada contesta -- así el
+  // webhook de Telnyx (grabación, duración real) y el descuento de
+  // minutos tienen dónde aterrizar aunque el operador cierre sin guardar
+  // un resultado. handleGuardarResultado hace UPDATE sobre esta fila en
+  // vez de un INSERT nuevo cuando ya existe.
+  const callRowIdRef = useRef(null);
 
   // Coloca la llamada real al montar.
   useEffect(() => {
@@ -165,6 +171,44 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
     }
   }, [phase, status]);
 
+  // Registra la llamada en `calls` apenas contesta, no cuando el operador
+  // guarda el resultado -- si se cierra la pestaña o se cierra sin
+  // guardar, igual queda un registro con telnyx_call_control_id, que es
+  // lo que el webhook de Telnyx necesita para asociar la grabación y
+  // descontar minutos reales, aunque nunca se elija un resultado.
+  useEffect(() => {
+    if (status !== 'conectada' || callRowIdRef.current) return;
+
+    (async () => {
+      const ids = telnyxIDsRef.current || {};
+      const { data, error } = await supabase
+        .from('calls')
+        .insert({
+          user_id: myIdRef.current,
+          lead_id: call.leadId || null,
+          tipo: call.leadId ? 'lead' : 'externa',
+          numero: call.numero,
+          estado_tecnico: 'en_curso',
+          telnyx_call_control_id: ids.telnyxCallControlId || null,
+          telnyx_call_leg_id: ids.telnyxLegId || null,
+          telnyx_call_session_id: ids.telnyxSessionId || null,
+          hora_inicio: horaInicioRef.current,
+        })
+        .select('id')
+        .single();
+
+      if (error) {
+        // No bloqueamos la llamada por esto -- el operador sigue
+        // pudiendo hablar. Se pierde la asociación temprana, pero
+        // handleGuardarResultado todavía puede insertar al final.
+        console.error('No se pudo registrar el inicio de la llamada:', error.message);
+      } else {
+        callRowIdRef.current = data.id;
+      }
+    })();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [status]);
+
   const initials = getInitials(call.name || call.numero || '?');
   const colors = getAvatarColors(call.name || call.numero || '?');
 
@@ -205,20 +249,39 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
     setSaving(true);
 
     const ids = telnyxIDsRef.current || {};
-    const { error } = await supabase.from('calls').insert({
-      user_id: myIdRef.current,
-      lead_id: call.leadId || null,
-      tipo: call.leadId ? 'lead' : 'externa',
-      numero: call.numero,
-      estado_tecnico: 'finalizada',
-      resultado,
-      duracion_segundos: elapsed,
-      telnyx_call_control_id: ids.telnyxCallControlId || null,
-      telnyx_call_leg_id: ids.telnyxLegId || null,
-      telnyx_call_session_id: ids.telnyxSessionId || null,
-      hora_inicio: horaInicioRef.current,
-      hora_fin: new Date().toISOString(),
-    });
+    let error;
+
+    if (callRowIdRef.current) {
+      // Ya existe la fila (se creó al contestar) -- solo cerramos el
+      // registro con el resultado y la duración real.
+      ({ error } = await supabase
+        .from('calls')
+        .update({
+          estado_tecnico: 'finalizada',
+          resultado,
+          duracion_segundos: elapsed,
+          hora_fin: new Date().toISOString(),
+        })
+        .eq('id', callRowIdRef.current));
+    } else {
+      // La llamada nunca llegó a 'conectada' (no contestó, ocupado,
+      // falló) -- no hay fila todavía, se inserta directo con el
+      // resultado final, igual que antes.
+      ({ error } = await supabase.from('calls').insert({
+        user_id: myIdRef.current,
+        lead_id: call.leadId || null,
+        tipo: call.leadId ? 'lead' : 'externa',
+        numero: call.numero,
+        estado_tecnico: 'finalizada',
+        resultado,
+        duracion_segundos: elapsed,
+        telnyx_call_control_id: ids.telnyxCallControlId || null,
+        telnyx_call_leg_id: ids.telnyxLegId || null,
+        telnyx_call_session_id: ids.telnyxSessionId || null,
+        hora_inicio: horaInicioRef.current,
+        hora_fin: new Date().toISOString(),
+      }));
+    }
 
     setSaving(false);
 
