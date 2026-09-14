@@ -722,7 +722,22 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations
     setSaving(false);
 
     if (fnError || data?.error) {
-      setError(data?.error || fnError.message);
+      // El mensaje genérico de Supabase ("Edge Function returned a
+      // non-2xx status code") no dice el motivo real -- el cuerpo con
+      // el mensaje específico de admin-create-user viene en
+      // fnError.context, no en fnError.message. Mismo parche que ya
+      // tiene fetchToken() en lib/telnyx/client.js.
+      let detail = data?.error || fnError?.message;
+      if (fnError?.context) {
+        try {
+          const body = await fnError.context.json();
+          if (body?.error) detail = body.error;
+        } catch {
+          // Si el cuerpo no se puede leer como JSON, nos quedamos con
+          // el mensaje genérico -- mejor eso que romper aquí.
+        }
+      }
+      setError(detail);
       return;
     }
 
