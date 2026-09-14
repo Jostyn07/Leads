@@ -17,6 +17,20 @@ export default function AuthWatcher() {
         router.replace('/login?expired=1');
       }
       if (event === 'SIGNED_IN' && session?.user) {
+        // El link de invitación (y el de "olvidé mi contraseña") trae
+        // #access_token=...&type=invite (o type=recovery) en el hash.
+        // El cliente de Supabase detecta el token solo y dispara este
+        // mismo SIGNED_IN -- sin este chequeo, la persona queda con
+        // sesión iniciada pero SIN contraseña definida, y la próxima
+        // vez no puede entrar con email/contraseña normal.
+        const hash = typeof window !== 'undefined' ? window.location.hash : '';
+        const isInviteOrRecovery = /type=(invite|recovery)/.test(hash);
+
+        if (isInviteOrRecovery && pathname !== '/set-password') {
+          router.replace('/set-password');
+          return;
+        }
+
         checkEstadoOnce(session.user.id);
       }
     });
