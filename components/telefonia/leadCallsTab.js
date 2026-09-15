@@ -27,6 +27,9 @@ export default function LeadCallsTab({ lead, onCall }) {
   const [calls, setCalls] = useState([]);
   const [loading, setLoading] = useState(true);
   const [expandedId, setExpandedId] = useState(null);
+  const [recordingUrls, setRecordingUrls] = useState({}); // recordingId -> { url, filename }
+  const [loadingRecordingId, setLoadingRecordingId] = useState(null);
+  const [recordingError, setRecordingError] = useState(null);
 
   useEffect(() => {
     if (lead?.id) load();
@@ -36,11 +39,40 @@ export default function LeadCallsTab({ lead, onCall }) {
     setLoading(true);
     const { data } = await supabase
       .from('calls')
-      .select('id, tipo, numero, resultado, duracion_segundos, created_at, call_recordings ( disponible, duracion_segundos )')
+      .select('id, tipo, numero, resultado, duracion_segundos, created_at, call_recordings ( id, disponible, duracion_segundos )')
       .eq('lead_id', lead.id)
       .order('created_at', { ascending: false });
     setCalls(data ?? []);
     setLoading(false);
+  }
+
+  async function loadRecordingUrl(recordingId) {
+    if (recordingUrls[recordingId]) return; // ya la tenemos, no se vuelve a pedir
+
+    setRecordingError(null);
+    setLoadingRecordingId(recordingId);
+
+    const { data, error } = await supabase.functions.invoke('get-recording-url', {
+      body: { recording_id: recordingId },
+    });
+
+    setLoadingRecordingId(null);
+
+    if (error || data?.error) {
+      let detail = data?.error || error?.message;
+      if (error?.context) {
+        try {
+          const body = await error.context.json();
+          if (body?.error) detail = body.error;
+        } catch {
+          // sin cuerpo legible -- nos quedamos con el mensaje genérico
+        }
+      }
+      setRecordingError(detail);
+      return;
+    }
+
+    setRecordingUrls((prev) => ({ ...prev, [recordingId]: { url: data.url, filename: data.filename } }));
   }
 
   const totalLlamadas = calls.length;
@@ -67,7 +99,11 @@ export default function LeadCallsTab({ lead, onCall }) {
               return (
                 <div key={c.id} style={{ border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '0.75rem' }}>
                   <button
-                    onClick={() => setExpandedId(expanded ? null : c.id)}
+                    onClick={() => {
+                      const next = expanded ? null : c.id;
+                      setExpandedId(next);
+                      if (next && rec?.disponible) loadRecordingUrl(rec.id);
+                    }}
                     style={{ display: 'flex', width: '100%', alignItems: 'center', justifyContent: 'space-between', background: 'none', border: 'none' }}
                   >
                     <div style={{ textAlign: 'left' }}>
@@ -87,14 +123,25 @@ export default function LeadCallsTab({ lead, onCall }) {
                   {expanded && (
                     <div style={{ marginTop: '0.7rem', paddingTop: '0.7rem', borderTop: '1px solid var(--color-border)' }}>
                       {rec?.disponible ? (
-                        <div
-                          style={{ display: 'flex', alignItems: 'center', gap: 8, opacity: 0.6 }}
-                          title="Reproducción pendiente de conectar (requiere la Edge Function de grabaciones con signed URLs)"
-                        >
-                          <button className="btn btn-secondary" disabled style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>▶</button>
-                          <span style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>0:00 / {formatDuracion(rec.duracion_segundos)}</span>
-                          <button className="btn btn-secondary" disabled style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>↓ Descargar</button>
-                        </div>
+                        recordingUrls[rec.id] ? (
+                          <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
+                            <audio controls src={recordingUrls[rec.id].url} style={{ width: '100%', height: 32 }} />
+                            <a
+                              href={recordingUrls[rec.id].url}
+                              download={recordingUrls[rec.id].filename}
+                              className="btn btn-secondary"
+                              style={{ alignSelf: 'flex-start', padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
+                            >
+                              ↓ Descargar
+                            </a>
+                          </div>
+                        ) : loadingRecordingId === rec.id ? (
+                          <span style={{ fontSize: '0.8rem', color: 'var(--color-text-tertiary)' }}>Cargando grabación…</span>
+                        ) : (
+                          <span style={{ fontSize: '0.8rem', color: 'var(--color-danger)' }}>
+                            {recordingError || 'No se pudo cargar la grabación.'}
+                          </span>
+                        )
                       ) : (
                         <span style={{ fontSize: '0.8rem', color: 'var(--color-text-tertiary)' }}>Sin grabación disponible.</span>
                       )}
