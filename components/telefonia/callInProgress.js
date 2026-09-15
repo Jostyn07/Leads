@@ -226,7 +226,7 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
           lead_id: call.leadId || null,
           tipo: call.leadId ? 'lead' : 'externa',
           numero: call.numero,
-          estado_tecnico: 'en_curso',
+          estado_tecnico: 'contestada',
           telnyx_call_control_id: ids.telnyxCallControlId || null,
           telnyx_call_leg_id: ids.telnyxLegId || null,
           telnyx_call_session_id: ids.telnyxSessionId || null,

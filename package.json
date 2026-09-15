@@ -1,19 +1,19 @@
 {
-  "name": "leads-platform",
-  "version": "0.1.0",
-  "private": true,
+  "name": "sistema-control-flores",
+  "version": "1.0.0",
+  "description": "Sistema de control de producción, inventario y finanzas",
+  "main": "server/index.js",
+  "type": "commonjs",
   "scripts": {
-    "dev": "next dev",
-    "build": "next build",
-    "start": "next start",
-    "lint": "next lint"
+    "start": "node server/index.js",
+    "dev": "node --watch server/index.js"
   },
   "dependencies": {
-    "@supabase/supabase-js": "^2.45.4",
-    "@telnyx/webrtc": "^2.27.10",
-    "next": "14.2.35",
-    "react": "^18.3.1",
-    "react-dom": "^18.3.1",
-    "xlsx": "https://cdn.sheetjs.com/xlsx-latest/xlsx-latest.tgz"
+    "@supabase/supabase-js": "^2.45.0",
+    "archiver": "^7.0.1",
+    "dotenv": "^16.4.5",
+    "express": "^4.19.2",
+    "multer": "^1.4.5-lts.1",
+    "xlsx": "^0.18.5"
   }
 }
