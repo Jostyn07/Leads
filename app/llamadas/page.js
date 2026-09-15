@@ -31,6 +31,30 @@ function formatFechaHora(iso) {
   return `${fecha} · ${hora}`;
 }
 
+// Reutilizado tanto por el botón ▶ (reproducir) como por "Descargar
+// grabación" del menú -- misma Edge Function, ambas URLs en una sola
+// llamada, cada una válida solo por unos minutos.
+async function fetchRecordingUrls(recordingId) {
+  const { data, error } = await supabase.functions.invoke('get-recording-url', {
+    body: { recording_id: recordingId },
+  });
+
+  if (error || data?.error) {
+    let detail = data?.error || error?.message;
+    if (error?.context) {
+      try {
+        const body = await error.context.json();
+        if (body?.error) detail = body.error;
+      } catch {
+        // sin cuerpo legible -- nos quedamos con el mensaje genérico
+      }
+    }
+    throw new Error(detail || 'No se pudo cargar la grabación.');
+  }
+
+  return data;
+}
+
 export default function LlamadasPage() {
   const [isAdmin, setIsAdmin] = useState(false);
   const [isOwner, setIsOwner] = useState(false);
@@ -58,6 +82,41 @@ export default function LlamadasPage() {
   const [noticeDismissed, setNoticeDismissed] = useState(false);
   const [nuevaLlamadaOpen, setNuevaLlamadaOpen] = useState(false);
   const [activeCall, setActiveCall] = useState(null);
+  const [recordingBusyId, setRecordingBusyId] = useState(null);
+  const [recordingError, setRecordingError] = useState(null);
+
+  async function handlePlayRecording(recordingId) {
+    setRecordingError(null);
+    setRecordingBusyId(recordingId);
+    try {
+      const { play_url } = await fetchRecordingUrls(recordingId);
+      // Se abre en pestaña nueva -- el navegador reproduce audio/mpeg
+      // directo, sin necesidad de un reproductor embebido en la tabla.
+      window.open(play_url, '_blank', 'noopener');
+    } catch (err) {
+      setRecordingError(err.message);
+    } finally {
+      setRecordingBusyId(null);
+    }
+  }
+
+  async function handleDownloadRecording(recordingId) {
+    setRecordingError(null);
+    setRecordingBusyId(recordingId);
+    try {
+      const { download_url, filename } = await fetchRecordingUrls(recordingId);
+      const a = document.createElement('a');
+      a.href = download_url;
+      a.download = filename;
+      document.body.appendChild(a);
+      a.click();
+      a.remove();
+    } catch (err) {
+      setRecordingError(err.message);
+    } finally {
+      setRecordingBusyId(null);
+    }
+  }
 
   useEffect(() => {
     loadContext();
@@ -125,7 +184,7 @@ export default function LlamadasPage() {
         `id, tipo, numero, estado_tecnico, resultado, duracion_segundos, hora_inicio, created_at, user_id,
          leads ( id, name ),
          profiles ( full_name ),
-         call_recordings ( disponible, duracion_segundos )`,
+         call_recordings ( id, disponible, duracion_segundos )`,
         { count: 'exact' }
       );
 
@@ -224,12 +283,16 @@ export default function LlamadasPage() {
         const rec = Array.isArray(c.call_recordings) ? c.call_recordings[0] : c.call_recordings;
         if (!rec?.disponible) return <span style={{ color: 'var(--color-text-tertiary)' }}>—</span>;
         return (
-          <div
-            style={{ display: 'flex', alignItems: 'center', gap: 6, opacity: 0.6 }}
-            title="Reproducción pendiente de conectar (requiere la Edge Function de grabaciones con signed URLs)"
-          >
-            <button className="btn btn-secondary" disabled style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}>▶</button>
-            <span style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>0:00 / {formatDuracion(rec.duracion_segundos)}</span>
+          <div style={{ display: 'flex', alignItems: 'center', gap: 6 }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => handlePlayRecording(rec.id)}
+              disabled={recordingBusyId === rec.id}
+              style={{ padding: '0.25rem 0.5rem', fontSize: '0.75rem' }}
+            >
+              {recordingBusyId === rec.id ? '…' : '▶'}
+            </button>
+            <span style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>{formatDuracion(rec.duracion_segundos)}</span>
           </div>
         );
       },
@@ -246,14 +309,14 @@ export default function LlamadasPage() {
     {
       key: 'acciones',
       label: '',
-      render: (c) => (
-        <CardMenu
-          items={[
-            { label: 'Ver detalle', onClick: () => (window.location.href = c.leads?.id ? `/leads/${c.leads.id}?tab=llamadas` : '#') },
-            { label: 'Descargar grabación', onClick: () => alert('Pendiente de conectar la Edge Function de grabaciones.') },
-          ]}
-        />
-      ),
+      render: (c) => {
+        const rec = Array.isArray(c.call_recordings) ? c.call_recordings[0] : c.call_recordings;
+        const items = [{ label: 'Ver detalle', onClick: () => (window.location.href = c.leads?.id ? `/leads/${c.leads.id}?tab=llamadas` : '#') }];
+        if (rec?.disponible) {
+          items.push({ label: 'Descargar grabación', onClick: () => handleDownloadRecording(rec.id) });
+        }
+        return <CardMenu items={items} />;
+      },
     },
   ];
 
@@ -289,6 +352,7 @@ export default function LlamadasPage() {
       )}
 
       {errorMsg && <p style={{ color: 'var(--color-danger)', marginBottom: '1rem' }}>{errorMsg}</p>}
+      {recordingError && <p style={{ color: 'var(--color-danger)', marginBottom: '1rem' }}>{recordingError}</p>}
 
       {stats && (
         <div style={{ display: 'grid', gridTemplateColumns: 'repeat(4, minmax(150px, 1fr))', gap: '0.75rem', marginBottom: '1.1rem' }}>

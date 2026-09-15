@@ -72,7 +72,7 @@ export default function LeadCallsTab({ lead, onCall }) {
       return;
     }
 
-    setRecordingUrls((prev) => ({ ...prev, [recordingId]: { url: data.url, filename: data.filename } }));
+    setRecordingUrls((prev) => ({ ...prev, [recordingId]: { playUrl: data.play_url, downloadUrl: data.download_url, filename: data.filename } }));
   }
 
   const totalLlamadas = calls.length;
@@ -125,9 +125,9 @@ export default function LeadCallsTab({ lead, onCall }) {
                       {rec?.disponible ? (
                         recordingUrls[rec.id] ? (
                           <div style={{ display: 'flex', flexDirection: 'column', gap: 6 }}>
-                            <audio controls src={recordingUrls[rec.id].url} style={{ width: '100%', height: 32 }} />
+                            <audio controls src={recordingUrls[rec.id].playUrl} style={{ width: '100%', height: 32 }} />
                             <a
-                              href={recordingUrls[rec.id].url}
+                              href={recordingUrls[rec.id].downloadUrl}
                               download={recordingUrls[rec.id].filename}
                               className="btn btn-secondary"
                               style={{ alignSelf: 'flex-start', padding: '0.25rem 0.6rem', fontSize: '0.75rem' }}
