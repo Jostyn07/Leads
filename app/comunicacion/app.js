@@ -202,6 +202,12 @@ export default function ComunicacionPage() {
                       borderRadius: 'var(--radius)',
                       background: 'none',
                       border: 'none',
+                      // Sin esto, el botón hereda el color de texto por
+                      // defecto del navegador (negro) en vez del de la
+                      // app -- se veía bien en modo claro (negro sobre
+                      // claro) pero era casi invisible en modo oscuro
+                      // (negro sobre oscuro).
+                      color: 'var(--color-text)',
                       fontSize: '0.85rem',
                     }}
                   >

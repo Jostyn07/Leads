@@ -25,6 +25,8 @@ function OrganizacionesPageContent() {
 
   const [editingOrg, setEditingOrg] = useState(null); // null = cerrado, {} = crear, {id,...} = editar
   const [deletingOrg, setDeletingOrg] = useState(null);
+  const [accessMsg, setAccessMsg] = useState(null);
+  const [requestingAccessFor, setRequestingAccessFor] = useState(null);
 
   useEffect(() => {
     load();
@@ -105,6 +107,27 @@ function OrganizacionesPageContent() {
     return error;
   }
 
+  // (Fase 3) Ya no se ven los leads/llamadas de una organización por
+  // defecto -- hay que pedirlo explícitamente. Queda registrado en
+  // audit_logs (motivo incluido) y da acceso de lectura por 4 horas.
+  async function handleRequestAccess(org) {
+    setRequestingAccessFor(org.id);
+    setAccessMsg(null);
+    const { error } = await supabase.rpc('request_org_data_access', {
+      p_organization_id: org.id,
+      p_motivo: null,
+    });
+    setRequestingAccessFor(null);
+    if (error) {
+      setAccessMsg({ type: 'error', text: `No se pudo pedir el acceso: ${error.message}` });
+      return;
+    }
+    setAccessMsg({
+      type: 'ok',
+      text: `Acceso a los leads y llamadas de "${org.name}" concedido por 4 horas. Ya puedes verlos en Leads y Llamadas.`,
+    });
+  }
+
   const columns = [
     { key: 'nombre', label: 'Nombre', render: (o) => <span style={{ fontWeight: 600 }}>{o.name}</span> },
     { key: 'usuarios', label: 'Usuarios', render: (o) => userCounts[o.id] || 0 },
@@ -119,6 +142,10 @@ function OrganizacionesPageContent() {
       render: (o) => (
         <CardMenu
           items={[
+            {
+              label: requestingAccessFor === o.id ? 'Pidiendo acceso…' : 'Ver datos (4h)',
+              onClick: () => handleRequestAccess(o),
+            },
             { label: 'Renombrar', onClick: () => setEditingOrg(o) },
             { label: 'Eliminar', onClick: () => setDeletingOrg(o), danger: true },
           ]}
@@ -134,12 +161,19 @@ function OrganizacionesPageContent() {
           <h1 style={{ fontSize: '1.9rem', fontWeight: 750, letterSpacing: '-0.02em' }}>Organizaciones</h1>
           <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
             Cada cliente de la plataforma es una organización — sus usuarios y leads quedan aislados entre sí.
+            Ya no ves sus leads ni llamadas por defecto: pide acceso desde el menú de cada fila (queda registrado
+            y dura 4 horas).
           </p>
         </div>
         <Button onClick={() => setEditingOrg({})}>+ Nueva organización</Button>
       </div>
 
       {errorMsg && <p style={{ color: 'var(--color-danger)', marginBottom: '1rem' }}>{errorMsg}</p>}
+      {accessMsg && (
+        <p style={{ color: accessMsg.type === 'error' ? 'var(--color-danger)' : 'var(--color-status-custom-text)', marginBottom: '1rem', fontSize: '0.85rem' }}>
+          {accessMsg.text}
+        </p>
+      )}
 
       {loading ? (
         <p>Cargando…</p>

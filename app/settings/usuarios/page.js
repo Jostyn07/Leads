@@ -13,6 +13,7 @@ const TABS = [
   { href: '/settings/usuarios', label: 'Usuarios' },
   { href: '/settings/numeros', label: 'Números' },
   { href: '/settings/plantillas', label: 'Plantillas de permisos' },
+  { href: '/settings/organizacion', label: 'Organización' },
   { href: '/settings/actividad', label: 'Registro de actividad' },
 ];
 
@@ -26,6 +27,15 @@ function rolLabel(role) {
   if (role === 'admin') return 'Administrador';
   if (role === 'owner') return 'Dueño';
   return 'Agente';
+}
+
+// (4) El owner asigna desde todo el catálogo de la organización. Un
+// admin solo puede repartir entre sus agentes los números que a él
+// mismo le fueron asignados -- myNumberIds llega null para el owner
+// (sin restricción) y como Set para un admin.
+function assignableNumbers(phoneNumbers, isOwner, myNumberIds) {
+  if (isOwner || !myNumberIds) return phoneNumbers;
+  return phoneNumbers.filter((n) => myNumberIds.has(n.id));
 }
 
 export default function UsuariosPage() {
@@ -50,9 +60,21 @@ export default function UsuariosPage() {
   const [isOwner, setIsOwner] = useState(false);
   const [stats, setStats] = useState(null);
 
+  // Contexto de "quién soy" -- lo usamos para dos restricciones nuevas:
+  // (4) un admin solo puede asignarle a sus agentes números que a ÉL
+  //     mismo le hayan sido asignados (no todo el catálogo).
+  // (6) un admin no puede ponerle a nadie (ni a sí mismo) más minutos
+  //     de los que el owner le asignó a él.
+  // myNumberIds/myMinutosAsignados quedan en null para el owner
+  // (sin restricción, ve/asigna todo el catálogo de su organización).
+  const [currentUserId, setCurrentUserId] = useState(null);
+  const [myNumberIds, setMyNumberIds] = useState(null);
+  const [myMinutosAsignados, setMyMinutosAsignados] = useState(null);
+
   const [editingUser, setEditingUser] = useState(null);
   const [addingMinutesTo, setAddingMinutesTo] = useState(null);
   const [createModalOpen, setCreateModalOpen] = useState(false);
+  const [changingPasswordFor, setChangingPasswordFor] = useState(null);
 
   useEffect(() => {
     loadContext();
@@ -63,11 +85,18 @@ export default function UsuariosPage() {
       data: { user },
     } = await supabase.auth.getUser();
     if (!user) return;
-    const { data } = await supabase.from('profiles').select('role').eq('id', user.id).single();
+    setCurrentUserId(user.id);
+    const { data } = await supabase.from('profiles').select('role, minutos_asignados_segundos').eq('id', user.id).single();
     if (data?.role === 'owner') {
       setIsOwner(true);
       const { data: orgs } = await supabase.from('organizations').select('id, name').order('name');
       setOrganizations(orgs ?? []);
+    } else {
+      setMyMinutosAsignados(data?.minutos_asignados_segundos || 0);
+      if (data?.role === 'admin') {
+        const { data: mine } = await supabase.from('user_phone_numbers').select('phone_number_id').eq('user_id', user.id);
+        setMyNumberIds(new Set((mine ?? []).map((r) => r.phone_number_id)));
+      }
     }
   }
 
@@ -183,6 +212,14 @@ export default function UsuariosPage() {
     // Solo el owner puede mover a alguien de una organización a otra.
     if (isOwner && updated.organization_id) payload.organization_id = updated.organization_id;
 
+    // (6) Un admin no puede ponerle a nadie más minutos de los que el
+    // owner le asignó a él -- se valida también aquí (además de
+    // deshabilitar el campo en la UI) porque el input del formulario
+    // se puede editar igual si alguien manipula el DOM.
+    if (!isOwner && payload.minutos_asignados_segundos > (myMinutosAsignados || 0)) {
+      return { message: `No puedes asignar más de ${minutos(myMinutosAsignados)} minutos -- es el límite que el dueño te asignó a ti.` };
+    }
+
     const { data, error } = await supabase.from('profiles').update(payload).eq('id', updated.id).select('id');
 
     // RLS bloquea un UPDATE en silencio: si la fila no cumple la
@@ -193,10 +230,6 @@ export default function UsuariosPage() {
       return { message: 'No se pudo guardar — no tienes permiso para editar este usuario.' };
     }
 
-    if (!error) {
-      setEditingUser(null);
-      refresh();
-    }
     return error;
   }
 
@@ -335,6 +368,7 @@ export default function UsuariosPage() {
         <CardMenu
           items={[
             { label: 'Editar usuario', onClick: () => setEditingUser(u) },
+            { label: 'Cambiar contraseña', onClick: () => setChangingPasswordFor(u) },
             { label: u.llamadas_habilitadas ? 'Desactivar llamadas' : 'Activar llamadas', onClick: () => toggleLlamadas(u) },
             { label: 'Agregar minutos', onClick: () => setAddingMinutesTo(u) },
             { label: 'Ver estadísticas', onClick: () => (window.location.href = `/llamadas?usuario=${u.id}`) },
@@ -453,14 +487,23 @@ export default function UsuariosPage() {
         organizations={organizations}
         phoneNumbers={phoneNumbers}
         isOwner={isOwner}
+        currentUserId={currentUserId}
+        myNumberIds={myNumberIds}
+        myMinutosAsignados={myMinutosAsignados}
         onClose={() => setEditingUser(null)}
         onSave={saveEdit}
+        onSaved={refresh}
       />
 
       <AddMinutesModal
         user={addingMinutesTo}
         onClose={() => setAddingMinutesTo(null)}
         onSave={saveAddMinutes}
+      />
+
+      <ChangePasswordModal
+        user={changingPasswordFor}
+        onClose={() => setChangingPasswordFor(null)}
       />
 
       <CreateUserModal
@@ -470,6 +513,8 @@ export default function UsuariosPage() {
         phoneNumbers={phoneNumbers}
         organizations={organizations}
         isOwner={isOwner}
+        myNumberIds={myNumberIds}
+        myMinutosAsignados={myMinutosAsignados}
         onCreated={refresh}
       />
     </main>
@@ -488,7 +533,7 @@ function StatCard({ icon, value, label, color }) {
   );
 }
 
-function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, onClose, onSave }) {
+function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, currentUserId, myNumberIds, myMinutosAsignados, onClose, onSave, onSaved }) {
   const [form, setForm] = useState(null);
   const [selectedNumeroIds, setSelectedNumeroIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
@@ -521,6 +566,12 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
 
   if (!user || !form) return null;
 
+  const options = assignableNumbers(phoneNumbers, isOwner, myNumberIds);
+  // (6) Un admin no puede subir ni su propio límite de minutos ni el de
+  // nadie por encima de lo que el owner le asignó a él -- el campo
+  // queda de solo lectura para el admin cuando se edita a sí mismo.
+  const minutosLocked = !isOwner && user.id === currentUserId;
+
   function toggleNumero(id) {
     setSelectedNumeroIds((prev) => {
       const next = new Set(prev);
@@ -532,6 +583,7 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
 
   async function handleSave() {
     setSaving(true);
+    setError(null);
 
     const err = await onSave(form);
     if (err) {
@@ -542,7 +594,11 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
 
     // Los números se guardan aparte del resto del perfil -- es una
     // tabla distinta (user_phone_numbers), así que se sincroniza por
-    // diferencia: qué se agregó y qué se quitó desde que se abrió el modal.
+    // diferencia: qué se agregó y qué se quitó desde que se abrió el
+    // modal. A diferencia de antes, el modal ya NO se cierra hasta que
+    // esto también termine bien -- si algo falla (ej. RLS bloqueando
+    // el insert), el error queda visible aquí mismo en vez de perderse
+    // en silencio después de que el modal ya se cerró.
     const { data: current } = await supabase.from('user_phone_numbers').select('phone_number_id').eq('user_id', user.id);
     const currentIds = new Set((current ?? []).map((r) => r.phone_number_id));
 
@@ -550,15 +606,27 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
     const toRemove = [...currentIds].filter((id) => !selectedNumeroIds.has(id));
 
     if (toAdd.length > 0) {
-      await supabase.from('user_phone_numbers').insert(toAdd.map((phone_number_id) => ({ user_id: user.id, phone_number_id })));
+      const { error: addError } = await supabase
+        .from('user_phone_numbers')
+        .insert(toAdd.map((phone_number_id) => ({ user_id: user.id, phone_number_id })));
+      if (addError) {
+        setSaving(false);
+        setError(`El resto de los cambios se guardó, pero no se pudo asignar el número: ${addError.message}`);
+        return;
+      }
     }
     if (toRemove.length > 0) {
-      await supabase.from('user_phone_numbers').delete().eq('user_id', user.id).in('phone_number_id', toRemove);
+      const { error: removeError } = await supabase.from('user_phone_numbers').delete().eq('user_id', user.id).in('phone_number_id', toRemove);
+      if (removeError) {
+        setSaving(false);
+        setError(`El resto de los cambios se guardó, pero no se pudo quitar el número: ${removeError.message}`);
+        return;
+      }
     }
 
     setSaving(false);
-    // onSave ya cierra el modal y refresca la lista si todo salió bien
-    // (ver saveEdit en el componente padre).
+    onClose();
+    onSaved?.();
   }
 
   return (
@@ -616,19 +684,30 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
           label="Minutos asignados"
           type="number"
           min={0}
+          max={!isOwner ? minutos(myMinutosAsignados) : undefined}
           value={form.minutos_asignados}
+          disabled={minutosLocked}
           onChange={(e) => setForm({ ...form, minutos_asignados: e.target.value })}
         />
+        {!isOwner && (
+          <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)', marginTop: -6 }}>
+            {minutosLocked
+              ? 'Solo el dueño puede cambiar tus propios minutos asignados.'
+              : `No puedes asignar más de ${minutos(myMinutosAsignados)} minutos — es tu propio límite.`}
+          </p>
+        )}
 
         <div>
           <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Números para llamar (caller ID)</span>
-          {phoneNumbers.length === 0 ? (
+          {options.length === 0 ? (
             <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
-              No hay números en el catálogo todavía — agrégalos en la pestaña "Números".
+              {isOwner
+                ? 'No hay números en el catálogo todavía — agrégalos en la pestaña "Números".'
+                : 'Todavía no tienes ningún número asignado a ti mismo — pídele al dueño que te asigne uno antes de repartirlo.'}
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 160, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '0.5rem 0.75rem' }}>
-              {phoneNumbers.map((n) => (
+              {options.map((n) => (
                 <label key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem' }}>
                   <input type="checkbox" checked={selectedNumeroIds.has(n.id)} onChange={() => toggleNumero(n.id)} />
                   {n.numero}{n.etiqueta ? ` — ${n.etiqueta}` : ''}
@@ -688,11 +767,13 @@ function AddMinutesModal({ user, onClose, onSave }) {
 // Crear un usuario implica crear su cuenta de auth (auth.admin.inviteUserByEmail),
 // lo cual requiere service_role -- por eso pasa por la Edge Function
 // admin-create-user en vez de un insert directo desde el cliente.
-function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations, isOwner, onCreated }) {
+function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations, isOwner, myNumberIds, myMinutosAsignados, onCreated }) {
   const [form, setForm] = useState({ full_name: '', email: '', role: 'user', plantilla_id: '', llamadas_habilitadas: true, minutos_asignados: 0, organization_id: '' });
   const [selectedNumeroIds, setSelectedNumeroIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+
+  const options = assignableNumbers(phoneNumbers, isOwner, myNumberIds);
 
   function toggleNumero(id) {
     setSelectedNumeroIds((prev) => {
@@ -710,6 +791,12 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations
     }
     if (isOwner && !form.organization_id) {
       setError('Elige a qué organización pertenece este usuario.');
+      return;
+    }
+    // (6) Mismo tope que en edición: un admin no puede repartir más
+    // minutos de los que el owner le asignó a él.
+    if (!isOwner && Math.round(Number(form.minutos_asignados) || 0) * 60 > (myMinutosAsignados || 0)) {
+      setError(`No puedes asignar más de ${minutos(myMinutosAsignados)} minutos — es tu propio límite.`);
       return;
     }
     setSaving(true);
@@ -797,17 +884,31 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations
           Llamadas habilitadas
         </label>
 
-        <Input label="Minutos iniciales" type="number" min={0} value={form.minutos_asignados} onChange={(e) => setForm({ ...form, minutos_asignados: e.target.value })} />
+        <Input
+          label="Minutos iniciales"
+          type="number"
+          min={0}
+          max={!isOwner ? minutos(myMinutosAsignados) : undefined}
+          value={form.minutos_asignados}
+          onChange={(e) => setForm({ ...form, minutos_asignados: e.target.value })}
+        />
+        {!isOwner && (
+          <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)', marginTop: -6 }}>
+            No puedes asignar más de {minutos(myMinutosAsignados)} minutos — es tu propio límite.
+          </p>
+        )}
 
         <div>
           <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Números para llamar (caller ID)</span>
-          {phoneNumbers.length === 0 ? (
+          {options.length === 0 ? (
             <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
-              No hay números en el catálogo todavía — agrégalos en la pestaña "Números".
+              {isOwner
+                ? 'No hay números en el catálogo todavía — agrégalos en la pestaña "Números".'
+                : 'Todavía no tienes ningún número asignado a ti mismo — pídele al dueño que te asigne uno antes de repartirlo.'}
             </p>
           ) : (
             <div style={{ display: 'flex', flexDirection: 'column', gap: 6, maxHeight: 160, overflowY: 'auto', border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', padding: '0.5rem 0.75rem' }}>
-              {phoneNumbers.map((n) => (
+              {options.map((n) => (
                 <label key={n.id} style={{ display: 'flex', alignItems: 'center', gap: 8, fontSize: '0.85rem' }}>
                   <input type="checkbox" checked={selectedNumeroIds.has(n.id)} onChange={() => toggleNumero(n.id)} />
                   {n.numero}{n.etiqueta ? ` — ${n.etiqueta}` : ''}
@@ -825,6 +926,91 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
           <Button onClick={handleSubmit} disabled={saving}>{saving ? 'Creando…' : 'Crear usuario'}</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+
+// (3) El admin/owner cambia directamente la contraseña de un agente
+// (no envía un correo de recuperación) -- por eso necesita
+// service_role (auth.admin.updateUserById), y por eso pasa por una
+// Edge Function nueva en vez de una llamada directa desde el cliente:
+// mismo patrón que admin-create-user.
+function ChangePasswordModal({ user, onClose }) {
+  const [password, setPassword] = useState('');
+  const [confirm, setConfirm] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+  const [done, setDone] = useState(false);
+
+  useEffect(() => {
+    setPassword('');
+    setConfirm('');
+    setError(null);
+    setDone(false);
+  }, [user]);
+
+  if (!user) return null;
+
+  async function handleSave() {
+    if (password.length < 8) {
+      setError('La contraseña debe tener al menos 8 caracteres.');
+      return;
+    }
+    if (password !== confirm) {
+      setError('Las contraseñas no coinciden.');
+      return;
+    }
+    setSaving(true);
+    setError(null);
+
+    const { data, error: fnError } = await supabase.functions.invoke('admin-set-user-password', {
+      body: { user_id: user.id, new_password: password },
+    });
+
+    setSaving(false);
+
+    if (fnError || data?.error) {
+      // Mismo parche que ya tiene fetchToken() en lib/telnyx/client.js y
+      // handleSubmit() en CreateUserModal -- el mensaje real viene en
+      // fnError.context, no en fnError.message.
+      let detail = data?.error || fnError?.message;
+      if (fnError?.context) {
+        try {
+          const body = await fnError.context.json();
+          if (body?.error) detail = body.error;
+        } catch {
+          // Si el cuerpo no se puede leer como JSON, nos quedamos con
+          // el mensaje genérico.
+        }
+      }
+      setError(detail);
+      return;
+    }
+
+    setDone(true);
+  }
+
+  return (
+    <Modal open={!!user} onClose={onClose} title={`Cambiar contraseña de ${user.full_name || 'usuario'}`}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        {done ? (
+          <p style={{ fontSize: '0.88rem' }}>
+            Contraseña actualizada. Avísale a {user.full_name || 'la persona'} para que la use en su próximo ingreso.
+          </p>
+        ) : (
+          <>
+            <Input label="Nueva contraseña" type="password" value={password} onChange={(e) => setPassword(e.target.value)} />
+            <Input label="Confirmar contraseña" type="password" value={confirm} onChange={(e) => setConfirm(e.target.value)} />
+            {error && <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>}
+          </>
+        )}
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
+          <Button variant="secondary" onClick={onClose}>{done ? 'Cerrar' : 'Cancelar'}</Button>
+          {!done && (
+            <Button onClick={handleSave} disabled={saving}>{saving ? 'Guardando…' : 'Cambiar contraseña'}</Button>
+          )}
         </div>
       </div>
     </Modal>
