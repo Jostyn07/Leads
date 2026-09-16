@@ -538,6 +538,15 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
   const [selectedNumeroIds, setSelectedNumeroIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // (owner multi-org) el catálogo global (`phoneNumbers`) que llega
+  // como prop está filtrado por RLS a la organización DEL OWNER, no a
+  // la del usuario que se está editando -- si el owner administra
+  // varias organizaciones, eso mostraba números de una organización
+  // distinta a la del usuario, y por eso el guardado se rechazaba
+  // (con toda razón: un número de la organización A no se le puede
+  // asignar a alguien de la organización B). Para el owner, el
+  // catálogo se recarga según `form.organization_id`.
+  const [ownerOrgNumbers, setOwnerOrgNumbers] = useState(null);
 
   useEffect(() => {
     if (user) {
@@ -561,12 +570,27 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
     } else {
       setForm(null);
       setSelectedNumeroIds(new Set());
+      setOwnerOrgNumbers(null);
     }
   }, [user]);
 
+  useEffect(() => {
+    if (!isOwner || !form?.organization_id) {
+      setOwnerOrgNumbers(null);
+      return;
+    }
+    supabase
+      .from('phone_numbers')
+      .select('id, numero, etiqueta')
+      .eq('activo', true)
+      .eq('organization_id', form.organization_id)
+      .order('numero')
+      .then(({ data }) => setOwnerOrgNumbers(data ?? []));
+  }, [isOwner, form?.organization_id]);
+
   if (!user || !form) return null;
 
-  const options = assignableNumbers(phoneNumbers, isOwner, myNumberIds);
+  const options = isOwner ? ownerOrgNumbers ?? [] : assignableNumbers(phoneNumbers, isOwner, myNumberIds);
   // (6) Un admin no puede subir ni su propio límite de minutos ni el de
   // nadie por encima de lo que el owner le asignó a él -- el campo
   // queda de solo lectura para el admin cuando se edita a sí mismo.
@@ -699,10 +723,12 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
 
         <div>
           <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Números para llamar (caller ID)</span>
-          {options.length === 0 ? (
+          {isOwner && ownerOrgNumbers === null ? (
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>Cargando catálogo…</p>
+          ) : options.length === 0 ? (
             <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
               {isOwner
-                ? 'No hay números en el catálogo todavía — agrégalos en la pestaña "Números".'
+                ? 'Esta organización todavía no tiene números en su catálogo — agrégalos desde la pestaña "Números" mientras administras esa organización.'
                 : 'Todavía no tienes ningún número asignado a ti mismo — pídele al dueño que te asigne uno antes de repartirlo.'}
             </p>
           ) : (
@@ -772,8 +798,26 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations
   const [selectedNumeroIds, setSelectedNumeroIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
+  // Mismo fix que en EditUserModal: para el owner, el catálogo debe
+  // ser el de la organización elegida para este usuario nuevo, no el
+  // de la propia organización del owner.
+  const [ownerOrgNumbers, setOwnerOrgNumbers] = useState(null);
 
-  const options = assignableNumbers(phoneNumbers, isOwner, myNumberIds);
+  useEffect(() => {
+    if (!isOwner || !form.organization_id) {
+      setOwnerOrgNumbers(null);
+      return;
+    }
+    supabase
+      .from('phone_numbers')
+      .select('id, numero, etiqueta')
+      .eq('activo', true)
+      .eq('organization_id', form.organization_id)
+      .order('numero')
+      .then(({ data }) => setOwnerOrgNumbers(data ?? []));
+  }, [isOwner, form.organization_id]);
+
+  const options = isOwner ? ownerOrgNumbers ?? [] : assignableNumbers(phoneNumbers, isOwner, myNumberIds);
 
   function toggleNumero(id) {
     setSelectedNumeroIds((prev) => {
@@ -900,10 +944,14 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations
 
         <div>
           <span style={{ display: 'block', fontSize: '0.85rem', marginBottom: 4 }}>Números para llamar (caller ID)</span>
-          {options.length === 0 ? (
+          {isOwner && !form.organization_id ? (
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>Elige primero la organización.</p>
+          ) : isOwner && ownerOrgNumbers === null ? (
+            <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>Cargando catálogo…</p>
+          ) : options.length === 0 ? (
             <p style={{ fontSize: '0.82rem', color: 'var(--color-text-muted)' }}>
               {isOwner
-                ? 'No hay números en el catálogo todavía — agrégalos en la pestaña "Números".'
+                ? 'Esta organización todavía no tiene números en su catálogo — agrégalos desde la pestaña "Números" mientras la administras.'
                 : 'Todavía no tienes ningún número asignado a ti mismo — pídele al dueño que te asigne uno antes de repartirlo.'}
             </p>
           ) : (
