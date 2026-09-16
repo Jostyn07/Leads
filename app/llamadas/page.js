@@ -470,27 +470,364 @@ function StatCard({ icon, value, label, color }) {
 // curso directamente (sin conexión real) para poder ver y probar esa
 // interfaz — onStartCall es lo único que hay que cambiar cuando el
 // Voice SDK exista de verdad.
+const KEYPAD_KEYS = [
+  { key: '1', sub: '' }, { key: '2', sub: 'ABC' }, { key: '3', sub: 'DEF' },
+  { key: '4', sub: 'GHI' }, { key: '5', sub: 'JKL' }, { key: '6', sub: 'MNO' },
+  { key: '7', sub: 'PQRS' }, { key: '8', sub: 'TUV' }, { key: '9', sub: 'WXYZ' },
+  { key: '*', sub: '' }, { key: '0', sub: '+' }, { key: '#', sub: '' },
+];
+
+const AVATAR_COLORS = ['#6366f1', '#8b5cf6', '#22c55e', '#f59e0b', '#ec4899', '#06b6d4'];
+
+function avatarColorFor(seed) {
+  let hash = 0;
+  for (let i = 0; i < String(seed).length; i++) hash = String(seed).charCodeAt(i) + ((hash << 5) - hash);
+  return AVATAR_COLORS[Math.abs(hash) % AVATAR_COLORS.length];
+}
+
+function initialsFor(name) {
+  if (!name) return '#';
+  return name.split(' ').filter(Boolean).slice(0, 2).map((p) => p[0].toUpperCase()).join('');
+}
+
+function formatRelativeTime(iso) {
+  if (!iso) return '';
+  const fecha = new Date(iso);
+  const diffMin = Math.floor((Date.now() - fecha.getTime()) / 60000);
+  if (diffMin < 1) return 'Ahora';
+  if (diffMin < 60) return `Hace ${diffMin} min`;
+
+  const hora = fecha.toLocaleTimeString('es-CO', { hour: 'numeric', minute: '2-digit' });
+  const hoy = new Date().toDateString() === fecha.toDateString();
+  if (hoy) return `Hoy, ${hora}`;
+
+  const ayer = new Date(Date.now() - 86400000).toDateString() === fecha.toDateString();
+  if (ayer) return `Ayer, ${hora}`;
+
+  return `${fecha.toLocaleDateString('es-CO', { day: '2-digit', month: 'short' })}, ${hora}`;
+}
+
+function ContactRow({ nombre, numero, subtitulo, onCall, avatarSeed }) {
+  return (
+    <div style={{ display: 'flex', alignItems: 'center', gap: 10 }}>
+      <div
+        style={{
+          width: 38, height: 38, borderRadius: '50%', background: avatarColorFor(avatarSeed), color: '#fff',
+          display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '0.8rem', fontWeight: 700, flexShrink: 0,
+        }}
+      >
+        {initialsFor(nombre || numero)}
+      </div>
+      <div style={{ flex: 1, minWidth: 0 }}>
+        <div style={{ fontSize: '0.85rem', fontWeight: 600, overflow: 'hidden', textOverflow: 'ellipsis', whiteSpace: 'nowrap' }}>
+          {nombre || 'Número externo'}
+        </div>
+        <div style={{ fontSize: '0.76rem', color: 'var(--color-text-muted)' }}>{numero}</div>
+        {subtitulo && <div style={{ fontSize: '0.72rem', color: 'var(--color-text-tertiary)' }}>{subtitulo}</div>}
+      </div>
+      <button
+        onClick={onCall}
+        aria-label={`Llamar a ${nombre || numero}`}
+        style={{
+          width: 32, height: 32, borderRadius: '50%', border: 'none', background: 'var(--color-whatsapp-bg)',
+          color: 'var(--color-whatsapp)', display: 'flex', alignItems: 'center', justifyContent: 'center', cursor: 'pointer', flexShrink: 0,
+        }}
+      >
+        📞
+      </button>
+    </div>
+  );
+}
+
 function NuevaLlamadaModal({ open, onClose, onStartCall }) {
   const [numero, setNumero] = useState('');
+  const [panelView, setPanelView] = useState('recientes'); // 'recientes' | 'contactos'
+  const [recientes, setRecientes] = useState([]);
+  const [contactos, setContactos] = useState([]);
+  const [contactoQuery, setContactoQuery] = useState('');
+  const [loadingPanel, setLoadingPanel] = useState(false);
+  const [audioDevices, setAudioDevices] = useState([]);
+  const [audioDeviceId, setAudioDeviceId] = useState('default');
+  const [showAudioMenu, setShowAudioMenu] = useState(false);
 
-  function handleCall() {
-    onStartCall({ name: null, numero });
+  useEffect(() => {
+    if (!open) return;
     setNumero('');
+    setPanelView('recientes');
+    setContactoQuery('');
+    loadRecientes();
+    loadAudioDevices();
+  }, [open]);
+
+  async function loadRecientes() {
+    setLoadingPanel(true);
+    // NOTA: asume que `leads` tiene columnas `nombre` -- confírmamelo,
+    // si tu tabla usa otro nombre (ej. full_name) ajusto esta línea.
+    const { data } = await supabase
+      .from('calls')
+      .select('numero, created_at, leads ( id, nombre )')
+      .order('created_at', { ascending: false })
+      .limit(30);
+
+    const seen = new Set();
+    const list = [];
+    for (const row of data ?? []) {
+      if (seen.has(row.numero)) continue;
+      seen.add(row.numero);
+      list.push(row);
+      if (list.length >= 5) break;
+    }
+    setRecientes(list);
+    setLoadingPanel(false);
+  }
+
+  async function loadContactos(query) {
+    setLoadingPanel(true);
+    // NOTA: misma suposición -- `leads.nombre` y `leads.telefono`.
+    let q = supabase.from('leads').select('id, nombre, telefono').not('telefono', 'is', null).order('created_at', { ascending: false }).limit(20);
+    if (query) q = q.ilike('nombre', `%${query}%`);
+    const { data } = await q;
+    setContactos(data ?? []);
+    setLoadingPanel(false);
+  }
+
+  async function loadAudioDevices() {
+    try {
+      if (!navigator.mediaDevices?.enumerateDevices) return;
+      const devices = await navigator.mediaDevices.enumerateDevices();
+      setAudioDevices(devices.filter((d) => d.kind === 'audiooutput'));
+    } catch {
+      setAudioDevices([]);
+    }
+  }
+
+  async function handlePegar() {
+    try {
+      const text = await navigator.clipboard.readText();
+      setNumero((text || '').replace(/[^\d+]/g, ''));
+    } catch {
+      // el navegador puede negar el permiso de portapapeles -- no rompe nada
+    }
+  }
+
+  function handleCall(target) {
+    const finalNumero = (target?.telefono || target?.numero || numero || '').trim();
+    if (!finalNumero) return;
+    onStartCall({ name: target?.nombre || null, numero: finalNumero, leadId: target?.id || null });
     onClose();
   }
 
   return (
-    <Modal open={open} onClose={onClose} title="Nueva llamada">
-      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
-        <Input label="Número de teléfono" placeholder="+1 305 555 1234" value={numero} onChange={(e) => setNumero(e.target.value)} />
-        <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)' }}>
-          La ventana de llamada se abre para probar la interfaz — todavía no marca de verdad (falta el SDK WebRTC de Telnyx).
-        </p>
-        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
-          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-          <Button onClick={handleCall} disabled={!numero}>📞 Llamar</Button>
+    <Modal open={open} onClose={onClose} width={760}>
+      <div style={{ display: 'flex', alignItems: 'flex-start', gap: '0.9rem', marginBottom: '1.4rem' }}>
+        <div
+          style={{
+            width: 52, height: 52, borderRadius: '50%', background: 'var(--color-primary-soft)',
+            display: 'flex', alignItems: 'center', justifyContent: 'center', fontSize: '1.4rem', flexShrink: 0,
+          }}
+        >
+          📞
+        </div>
+        <div>
+          <h2 style={{ fontSize: '1.3rem', fontWeight: 700, margin: 0 }}>Nueva llamada</h2>
+          <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)', margin: '2px 0 0' }}>
+            Marca un número para iniciar la llamada
+          </p>
         </div>
       </div>
+
+      <div style={{ display: 'grid', gridTemplateColumns: '1fr 260px', gap: '1.5rem' }}>
+        <div>
+          <label style={{ display: 'block', fontSize: '0.85rem', fontWeight: 600, marginBottom: 6 }}>Número de teléfono</label>
+          <div
+            style={{
+              display: 'flex', alignItems: 'center', gap: 8, border: '1px solid var(--color-focus-border)',
+              borderRadius: 'var(--radius)', padding: '0.55rem 0.75rem', marginBottom: '1.1rem',
+              boxShadow: '0 0 0 3px var(--color-focus-shadow)', background: 'var(--color-input-bg)',
+            }}
+          >
+            <span style={{ fontSize: '1.1rem' }}>🇺🇸</span>
+            <span style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)' }}>▾</span>
+            <input
+              value={numero}
+              onChange={(e) => setNumero(e.target.value)}
+              placeholder="+1 305 555 1234"
+              style={{ flex: 1, border: 'none', outline: 'none', background: 'transparent', color: 'var(--color-text)', fontSize: '1rem' }}
+            />
+            {numero && (
+              <button
+                onClick={() => setNumero('')}
+                aria-label="Limpiar"
+                style={{
+                  background: 'var(--color-border)', border: 'none', borderRadius: '50%', width: 22, height: 22,
+                  display: 'flex', alignItems: 'center', justifyContent: 'center', color: 'var(--color-text-muted)', fontSize: '0.65rem', flexShrink: 0,
+                }}
+              >
+                ✕
+              </button>
+            )}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.6rem', marginBottom: '0.9rem' }}>
+            {KEYPAD_KEYS.map((k) => (
+              <button
+                key={k.key}
+                onClick={() => setNumero((n) => n + k.key)}
+                style={{
+                  background: 'var(--color-btn-secondary-bg)', border: '1px solid var(--color-border)',
+                  borderRadius: 'var(--radius)', padding: '0.85rem 0', display: 'flex', flexDirection: 'column',
+                  alignItems: 'center', gap: 2, cursor: 'pointer',
+                }}
+              >
+                <span style={{ fontSize: '1.3rem', fontWeight: 700, color: 'var(--color-text)' }}>{k.key}</span>
+                <span style={{ fontSize: '0.6rem', color: 'var(--color-text-tertiary)', letterSpacing: '0.05em' }}>{k.sub}</span>
+              </button>
+            ))}
+          </div>
+
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(3, 1fr)', gap: '0.6rem' }}>
+            <button
+              className="btn btn-secondary"
+              onClick={() => { setPanelView('contactos'); loadContactos(''); }}
+              style={{ flexDirection: 'column', gap: 2, padding: '0.6rem 0', fontSize: '0.76rem' }}
+            >
+              <span>👥</span>Contactos
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={() => { setPanelView('recientes'); loadRecientes(); }}
+              style={{ flexDirection: 'column', gap: 2, padding: '0.6rem 0', fontSize: '0.76rem' }}
+            >
+              <span>🕐</span>Recientes
+            </button>
+            <button
+              className="btn btn-secondary"
+              onClick={handlePegar}
+              style={{ flexDirection: 'column', gap: 2, padding: '0.6rem 0', fontSize: '0.76rem' }}
+            >
+              <span>📋</span>Pegar
+            </button>
+          </div>
+        </div>
+
+        <div style={{ borderLeft: '1px solid var(--color-border)', paddingLeft: '1.2rem' }}>
+          <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '0.75rem' }}>
+            <span style={{ fontSize: '0.9rem', fontWeight: 700 }}>
+              {panelView === 'recientes' ? 'Contactos recientes' : 'Contactos'}
+            </span>
+            {panelView === 'contactos' && (
+              <button
+                onClick={() => setPanelView('recientes')}
+                style={{ background: 'none', border: 'none', color: 'var(--color-primary)', fontSize: '0.78rem', cursor: 'pointer' }}
+              >
+                Ver recientes
+              </button>
+            )}
+          </div>
+
+          {panelView === 'contactos' && (
+            <input
+              className="input"
+              placeholder="Buscar contacto…"
+              value={contactoQuery}
+              onChange={(e) => { setContactoQuery(e.target.value); loadContactos(e.target.value); }}
+              style={{ marginBottom: '0.75rem', fontSize: '0.82rem', padding: '0.4rem 0.6rem' }}
+            />
+          )}
+
+          <div style={{ display: 'flex', flexDirection: 'column', gap: '0.9rem', maxHeight: 320, overflowY: 'auto' }}>
+            {loadingPanel ? (
+              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Cargando…</span>
+            ) : panelView === 'recientes' ? (
+              recientes.length === 0 ? (
+                <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Sin llamadas recientes.</span>
+              ) : (
+                recientes.map((r) => (
+                  <ContactRow
+                    key={r.numero}
+                    nombre={r.leads?.nombre}
+                    numero={r.numero}
+                    subtitulo={formatRelativeTime(r.created_at)}
+                    avatarSeed={r.numero}
+                    onCall={() => handleCall({ nombre: r.leads?.nombre, numero: r.numero, id: r.leads?.id })}
+                  />
+                ))
+              )
+            ) : contactos.length === 0 ? (
+              <span style={{ fontSize: '0.8rem', color: 'var(--color-text-muted)' }}>Sin contactos.</span>
+            ) : (
+              contactos.map((c) => (
+                <ContactRow
+                  key={c.id}
+                  nombre={c.nombre}
+                  numero={c.telefono}
+                  avatarSeed={c.id}
+                  onCall={() => handleCall(c)}
+                />
+              ))
+            )}
+          </div>
+        </div>
+      </div>
+
+      <div style={{ display: 'flex', alignItems: 'center', gap: '0.75rem', marginTop: '1.3rem', paddingTop: '1.1rem', borderTop: '1px solid var(--color-border)' }}>
+        <div style={{ position: 'relative', flex: 1 }}>
+          <button
+            className="btn btn-secondary"
+            onClick={() => setShowAudioMenu((v) => !v)}
+            style={{ width: '100%', justifyContent: 'space-between' }}
+          >
+            <span style={{ display: 'flex', alignItems: 'center', gap: 8 }}>
+              🎧
+              <span style={{ display: 'flex', flexDirection: 'column', alignItems: 'flex-start', lineHeight: 1.2 }}>
+                <span style={{ fontSize: '0.68rem', color: 'var(--color-text-tertiary)' }}>Dispositivo de audio</span>
+                <span style={{ fontSize: '0.82rem' }}>
+                  {audioDeviceId === 'default' ? 'Por defecto' : audioDevices.find((d) => d.deviceId === audioDeviceId)?.label || 'Por defecto'}
+                </span>
+              </span>
+            </span>
+            <span>▾</span>
+          </button>
+          {showAudioMenu && (
+            <div
+              style={{
+                position: 'absolute', bottom: '110%', left: 0, right: 0, background: 'var(--color-surface-solid)',
+                border: '1px solid var(--color-border)', borderRadius: 'var(--radius)', boxShadow: '0 8px 24px rgba(0,0,0,0.3)',
+                zIndex: 5, maxHeight: 160, overflowY: 'auto',
+              }}
+            >
+              <button
+                onClick={() => { setAudioDeviceId('default'); setShowAudioMenu(false); }}
+                style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.5rem 0.75rem', background: 'none', border: 'none', fontSize: '0.82rem', color: 'var(--color-text)', cursor: 'pointer' }}
+              >
+                Por defecto
+              </button>
+              {audioDevices.map((d) => (
+                <button
+                  key={d.deviceId}
+                  onClick={() => { setAudioDeviceId(d.deviceId); setShowAudioMenu(false); }}
+                  style={{ display: 'block', width: '100%', textAlign: 'left', padding: '0.5rem 0.75rem', background: 'none', border: 'none', fontSize: '0.82rem', color: 'var(--color-text)', cursor: 'pointer' }}
+                >
+                  {d.label || 'Dispositivo de audio'}
+                </button>
+              ))}
+            </div>
+          )}
+        </div>
+
+        <button
+          className="btn btn-primary"
+          onClick={() => handleCall()}
+          disabled={!numero.trim()}
+          style={{ padding: '0.75rem 1.75rem', fontSize: '0.95rem', fontWeight: 600, opacity: numero.trim() ? 1 : 0.5 }}
+        >
+          📞 Llamar
+        </button>
+      </div>
+
+      <p style={{ fontSize: '0.74rem', color: 'var(--color-text-tertiary)', textAlign: 'center', marginTop: '0.9rem' }}>
+        ⓘ La llamada se realizará a través de Telnyx.
+      </p>
     </Modal>
   );
 }

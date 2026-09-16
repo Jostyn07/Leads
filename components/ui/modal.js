@@ -1,6 +1,6 @@
 'use client';
 
-export default function Modal({ open, onClose, title, children }) {
+export default function Modal({ open, onClose, title, children, width = 420 }) {
   if (!open) return null;
 
   return (
@@ -19,7 +19,7 @@ export default function Modal({ open, onClose, title, children }) {
       <div
         onClick={(e) => e.stopPropagation()}
         className="card"
-        style={{ width: 420, maxWidth: '90vw', maxHeight: '85vh', overflow: 'auto' }}
+        style={{ width, maxWidth: '90vw', maxHeight: '85vh', overflow: 'auto' }}
       >
         <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'center', marginBottom: '1rem' }}>
           {title && <h2 style={{ fontSize: '1rem' }}>{title}</h2>}
