@@ -838,10 +838,6 @@ function NuevaLlamadaModal({ open, onClose, onStartCall }) {
           📞 Llamar
         </button>
       </div>
-
-      <p style={{ fontSize: '0.74rem', color: 'var(--color-text-tertiary)', textAlign: 'center', marginTop: '0.9rem' }}>
-        ⓘ La llamada se realizará a través de Telnyx.
-      </p>
     </Modal>
   );
 }
