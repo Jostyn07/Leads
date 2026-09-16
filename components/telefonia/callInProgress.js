@@ -5,6 +5,7 @@ import { getInitials, getAvatarColors } from '../leads/avatarColor';
 import { RESULTADO_LABEL, RESULTADO_STYLE, pillStyle } from '../../lib/telefonia/resultados';
 import { getTelnyxClient } from '../../lib/telnyx/client';
 import { supabase } from '../../lib/supabase/client';
+import Modal from '../ui/modal';
 
 const STATUS_LABEL = {
   iniciando: 'Iniciando…',
@@ -356,31 +357,28 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
     );
   }
 
+  // Mismo botón "Minimizar" de siempre, ahora inyectado en el header
+  // del Modal compartido (junto al botón de cerrar) en vez de vivir en
+  // un overlay aparte -- así la llamada usa el mismo diseño (fondo,
+  // tarjeta, header, bloqueo de scroll) que "Nueva llamada".
+  const minimizarButton =
+    phase === 'llamada' ? (
+      <button
+        onClick={() => setMinimized(true)}
+        aria-label="Minimizar"
+        style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: '1rem', padding: 4 }}
+      >
+        ─
+      </button>
+    ) : null;
+
   return (
-    <div
-      style={{
-        position: 'fixed',
-        inset: 0,
-        background: 'rgba(0,0,0,0.4)',
-        display: 'flex',
-        alignItems: 'center',
-        justifyContent: 'center',
-        zIndex: 60,
-      }}
-    >
+    <Modal open onClose={handleClose} width={380} zIndex={60} headerActions={minimizarButton}>
       {/* Elemento de audio donde se reproduce la voz remota -- lo usa
           getTelnyxClient() vía client.remoteElement. Oculto a propósito. */}
       <audio id="telnyx-remote-audio" autoPlay style={{ display: 'none' }} />
 
-      <div className="card" style={{ width: 360, maxWidth: '90vw', padding: '1.25rem', position: 'relative' }}>
-        <div style={{ position: 'absolute', top: 12, right: 12, display: 'flex', gap: 4 }}>
-          {phase === 'llamada' && (
-            <button onClick={() => setMinimized(true)} aria-label="Minimizar" style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: '1rem', padding: 4 }}>─</button>
-          )}
-          <button onClick={handleClose} aria-label="Cerrar" style={{ background: 'none', border: 'none', color: 'var(--color-text-muted)', fontSize: '1rem', padding: 4 }}>✕</button>
-        </div>
-
-        {phase === 'cargando_numeros' ? (
+      {phase === 'cargando_numeros' ? (
           <div style={{ textAlign: 'center', padding: '1rem 0' }}>
             <p style={{ fontSize: '0.9rem', color: 'var(--color-text-muted)' }}>Preparando llamada…</p>
           </div>
@@ -547,8 +545,7 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
             </div>
           </>
         )}
-      </div>
-    </div>
+    </Modal>
   );
 }
 

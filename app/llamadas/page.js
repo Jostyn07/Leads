@@ -561,13 +561,22 @@ function NuevaLlamadaModal({ open, onClose, onStartCall }) {
 
   async function loadRecientes() {
     setLoadingPanel(true);
-    // NOTA: asume que `leads` tiene columnas `nombre` -- confírmamelo,
-    // si tu tabla usa otro nombre (ej. full_name) ajusto esta línea.
-    const { data } = await supabase
+    // La tabla `leads` tiene columnas `name` y `phone` (no `nombre`/
+    // `telefono`) -- con el nombre equivocado Supabase devolvía error
+    // en el select anidado y `data` quedaba vacío, por eso nunca
+    // aparecían llamadas recientes.
+    const { data, error } = await supabase
       .from('calls')
-      .select('numero, created_at, leads ( id, nombre )')
+      .select('numero, created_at, leads ( id, name )')
       .order('created_at', { ascending: false })
       .limit(30);
+
+    if (error) {
+      console.error('No se pudieron cargar las llamadas recientes:', error.message);
+      setRecientes([]);
+      setLoadingPanel(false);
+      return;
+    }
 
     const seen = new Set();
     const list = [];
@@ -583,10 +592,15 @@ function NuevaLlamadaModal({ open, onClose, onStartCall }) {
 
   async function loadContactos(query) {
     setLoadingPanel(true);
-    // NOTA: misma suposición -- `leads.nombre` y `leads.telefono`.
-    let q = supabase.from('leads').select('id, nombre, telefono').not('telefono', 'is', null).order('created_at', { ascending: false }).limit(20);
-    if (query) q = q.ilike('nombre', `%${query}%`);
-    const { data } = await q;
+    let q = supabase.from('leads').select('id, name, phone').not('phone', 'is', null).order('created_at', { ascending: false }).limit(20);
+    if (query) q = q.ilike('name', `%${query}%`);
+    const { data, error } = await q;
+    if (error) {
+      console.error('No se pudieron cargar los contactos:', error.message);
+      setContactos([]);
+      setLoadingPanel(false);
+      return;
+    }
     setContactos(data ?? []);
     setLoadingPanel(false);
   }
@@ -611,9 +625,9 @@ function NuevaLlamadaModal({ open, onClose, onStartCall }) {
   }
 
   function handleCall(target) {
-    const finalNumero = (target?.telefono || target?.numero || numero || '').trim();
+    const finalNumero = (target?.phone || target?.numero || numero || '').trim();
     if (!finalNumero) return;
-    onStartCall({ name: target?.nombre || null, numero: finalNumero, leadId: target?.id || null });
+    onStartCall({ name: target?.name || null, numero: finalNumero, leadId: target?.id || null });
     onClose();
   }
 
@@ -745,11 +759,11 @@ function NuevaLlamadaModal({ open, onClose, onStartCall }) {
                 recientes.map((r) => (
                   <ContactRow
                     key={r.numero}
-                    nombre={r.leads?.nombre}
+                    nombre={r.leads?.name}
                     numero={r.numero}
                     subtitulo={formatRelativeTime(r.created_at)}
                     avatarSeed={r.numero}
-                    onCall={() => handleCall({ nombre: r.leads?.nombre, numero: r.numero, id: r.leads?.id })}
+                    onCall={() => handleCall({ name: r.leads?.name, numero: r.numero, id: r.leads?.id })}
                   />
                 ))
               )
@@ -759,8 +773,8 @@ function NuevaLlamadaModal({ open, onClose, onStartCall }) {
               contactos.map((c) => (
                 <ContactRow
                   key={c.id}
-                  nombre={c.nombre}
-                  numero={c.telefono}
+                  nombre={c.name}
+                  numero={c.phone}
                   avatarSeed={c.id}
                   onCall={() => handleCall(c)}
                 />
