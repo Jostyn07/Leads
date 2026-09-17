@@ -30,9 +30,19 @@ export default function NumerosPage() {
   const [editing, setEditing] = useState(null); // null = cerrado, {} = crear, {id,...} = editar
   const [deleting, setDeleting] = useState(null);
 
+  // (owner multi-org) el owner no pertenece a una sola organización
+  // -- necesita elegir cuál está administrando, igual que ya hace en
+  // Leads y al editar un usuario. Sin esto, la consulta no sabía qué
+  // catálogo mostrar y crear un número intentaba adjuntarlo a
+  // organization_id = NULL (el propio del owner).
+  const [isOwner, setIsOwner] = useState(false);
+  const [organizations, setOrganizations] = useState([]);
+  const [selectedOrgId, setSelectedOrgId] = useState('');
+
   useEffect(() => {
     load();
-  }, []);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [selectedOrgId]);
 
   async function load() {
     setLoading(true);
@@ -42,16 +52,37 @@ export default function NumerosPage() {
       data: { user },
     } = await supabase.auth.getUser();
 
+    let ownerNow = isOwner;
     if (user) {
-      const { data: myProfile } = await supabase.from('profiles').select('id, organization_id').eq('id', user.id).single();
+      const { data: myProfile } = await supabase.from('profiles').select('id, role, organization_id').eq('id', user.id).single();
       if (myProfile) {
         myProfileRef.current.id = myProfile.id;
         myProfileRef.current.organization_id = myProfile.organization_id;
+        ownerNow = myProfile.role === 'owner';
+        setIsOwner(ownerNow);
+        if (ownerNow && organizations.length === 0) {
+          const { data: orgs } = await supabase.from('organizations').select('id, name').order('name');
+          setOrganizations(orgs ?? []);
+        }
       }
     }
 
+    if (ownerNow && !selectedOrgId) {
+      // Todavía no eligió qué organización administrar -- nada que
+      // consultar (y la RLS igual no dejaría ver nada sin esto).
+      setNumeros([]);
+      setUsageByNumero({});
+      setLoading(false);
+      return;
+    }
+
+    let numerosQuery = supabase.from('phone_numbers').select('id, numero, etiqueta, activo, created_at').order('created_at', { ascending: false });
+    if (ownerNow && selectedOrgId) {
+      numerosQuery = numerosQuery.eq('organization_id', selectedOrgId);
+    }
+
     const [{ data: numerosData, error: numerosError }, { data: asignacionesData }] = await Promise.all([
-      supabase.from('phone_numbers').select('id, numero, etiqueta, activo, created_at').order('created_at', { ascending: false }),
+      numerosQuery,
       supabase.from('user_phone_numbers').select('phone_number_id'),
     ]);
 
@@ -71,14 +102,15 @@ export default function NumerosPage() {
 
   async function handleSave(form) {
     // organization_id/created_by solo van en el INSERT -- la RLS exige que
-    // coincida con tu propia organización, y en el UPDATE no se toca
-    // (un número no cambia de dueño al editarse, solo numero/etiqueta).
+    // coincida con tu propia organización (o, si eres el owner, con la
+    // organización que elegiste arriba -- el owner no tiene una
+    // organización propia para usar como default aquí).
     const payload = form.id
       ? { numero: form.numero.trim(), etiqueta: form.etiqueta.trim() || null }
       : {
           numero: form.numero.trim(),
           etiqueta: form.etiqueta.trim() || null,
-          organization_id: myProfileRef.current.organization_id,
+          organization_id: isOwner ? selectedOrgId : myProfileRef.current.organization_id,
           created_by: myProfileRef.current.id,
         };
 
@@ -153,9 +185,28 @@ export default function NumerosPage() {
           <p style={{ fontSize: '0.875rem', color: 'var(--color-text-muted)', marginTop: 4 }}>
             Catálogo de números comprados en Telnyx — agrégalos aquí para poder asignárselos a los usuarios como caller ID.
           </p>
+          {isOwner && (
+            <select
+              className="input"
+              style={{ height: 38, fontSize: '0.85rem', marginTop: 8 }}
+              value={selectedOrgId}
+              onChange={(e) => setSelectedOrgId(e.target.value)}
+            >
+              <option value="">Elige una organización…</option>
+              {organizations.map((o) => (
+                <option key={o.id} value={o.id}>{o.name}</option>
+              ))}
+            </select>
+          )}
         </div>
-        <Button onClick={() => setEditing({})}>+ Nuevo número</Button>
+        <Button onClick={() => setEditing({})} disabled={isOwner && !selectedOrgId}>+ Nuevo número</Button>
       </div>
+
+      {isOwner && !selectedOrgId && (
+        <p style={{ color: 'var(--color-text-muted)', marginBottom: '1rem', fontSize: '0.9rem' }}>
+          Elige una organización arriba para ver y administrar su catálogo de números.
+        </p>
+      )}
 
       <div className="tabs-bar">
         {TABS.map((t) => (
@@ -169,7 +220,7 @@ export default function NumerosPage() {
 
       {loading ? (
         <p>Cargando…</p>
-      ) : (
+      ) : isOwner && !selectedOrgId ? null : (
         <DataTable columns={columns} rows={numeros} emptyMessage="Todavía no hay números en el catálogo. Agrega el primero con “+ Nuevo número”." />
       )}
 
