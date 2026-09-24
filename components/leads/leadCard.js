@@ -4,6 +4,7 @@ import { useState } from 'react';
 import { getInitials, getAvatarColors } from './avatarColor';
 import CardMenu from '../ui/cardMenu';
 import { supabase } from '../../lib/supabase/client';
+import CallInProgress from '../telefonia/callInProgress';
 
 // Colorea la cápsula de embudo según su tipo. En este modelo el embudo
 // ES el estado (no hay una capa de "etapa" separada) — ver la
@@ -47,6 +48,32 @@ function getFunnelBadge(funnel) {
 
 export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid', onChanged }) {
   const [archiving, setArchiving] = useState(false);
+  // Llamada activa lanzada desde esta tarjeta -- se marca aquí mismo con
+  // Telnyx (mismo CallInProgress que usa /llamadas), sin salir de /leads.
+  const [activeCall, setActiveCall] = useState(null);
+
+  function handleCall(e) {
+    e.preventDefault();
+    e.stopPropagation();
+    if (!lead.phone) return;
+    setActiveCall({ name: lead.name, numero: lead.phone, leadId: lead.id });
+  }
+
+  // El modal vive dentro del árbol React de la tarjeta: se corta la
+  // propagación para que sus clics no disparen el onClick de la tarjeta.
+  const CallModal = activeCall && (
+    <div onClick={(e) => e.stopPropagation()}>
+      <CallInProgress
+        call={activeCall}
+        onClose={() => setActiveCall(null)}
+        onSaveResult={async () => {
+          // CallInProgress ya guardó la fila en `calls`; refrescamos la
+          // lista para que el estado del lead se actualice.
+          onChanged?.();
+        }}
+      />
+    </div>
+  );
 
   const rel = Array.isArray(lead.lead_funnel) ? lead.lead_funnel[0] : lead.lead_funnel;
   const funnel = rel ? (Array.isArray(rel.funnels) ? rel.funnels[0] : rel.funnels) : null;
@@ -75,7 +102,6 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
   ];
 
   const whatsappHref = `https://wa.me/1${lead.phone}`;
-  const callHref = `tel:${lead.phone}`;
 
   const Avatar = (
     <div
@@ -123,9 +149,9 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
       <a href={whatsappHref} target="_blank" rel="noreferrer" className="btn btn-whatsapp" style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}>
         💬 WhatsApp
       </a>
-      <a href={callHref} className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}>
+      <button type="button" onClick={handleCall} disabled={!lead.phone || !!activeCall} className="btn btn-primary" style={{ fontSize: '0.8rem', padding: '0.4rem 0.75rem' }}>
         📞 Llamar
-      </a>
+      </button>
     </div>
   );
 
@@ -160,6 +186,7 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
         </div>
         {ActionButtons}
         <CardMenu items={menuItems} />
+        {CallModal}
       </div>
     );
   }
@@ -197,10 +224,11 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
         <a href={whatsappHref} target="_blank" rel="noreferrer" className="btn btn-whatsapp" style={{ flex: 1, fontSize: '0.78rem', padding: '0.4rem' }}>
           💬 WhatsApp
         </a>
-        <a href={callHref} className="btn btn-primary" style={{ flex: 1, fontSize: '0.78rem', padding: '0.4rem' }}>
+        <button type="button" onClick={handleCall} disabled={!lead.phone || !!activeCall} className="btn btn-primary" style={{ flex: 1, fontSize: '0.78rem', padding: '0.4rem' }}>
           📞 Llamar
-        </a>
+        </button>
       </div>
+      {CallModal}
     </div>
   );
 }
