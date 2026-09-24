@@ -1,6 +1,7 @@
 'use client';
 
 import { useState } from 'react';
+import { createPortal } from 'react-dom';
 import { getInitials, getAvatarColors } from './avatarColor';
 import CardMenu from '../ui/cardMenu';
 import { supabase } from '../../lib/supabase/client';
@@ -61,7 +62,10 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
 
   // El modal vive dentro del árbol React de la tarjeta: se corta la
   // propagación para que sus clics no disparen el onClick de la tarjeta.
-  const CallModal = activeCall && (
+  // Se renderiza en document.body con un portal: la tarjeta tiene
+  // transform/backdrop-filter, que encierran cualquier position:fixed
+  // dentro de ella. Así sale centrado en pantalla, igual que en /llamadas.
+  const CallModal = activeCall && typeof document !== 'undefined' && createPortal(
     <div onClick={(e) => e.stopPropagation()}>
       <CallInProgress
         call={activeCall}
@@ -72,7 +76,8 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
           onChanged?.();
         }}
       />
-    </div>
+    </div>,
+    document.body
   );
 
   const rel = Array.isArray(lead.lead_funnel) ? lead.lead_funnel[0] : lead.lead_funnel;
