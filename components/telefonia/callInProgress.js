@@ -53,6 +53,11 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
   const [status, setStatus] = useState('iniciando');
   const [errorMsg, setErrorMsg] = useState(null);
   const [elapsed, setElapsed] = useState(0);
+  // Segundos disponibles del operador al iniciar la llamada (null = sin
+  // límite / no se pudo leer). Con esto se corta la llamada en vivo al
+  // agotarse, no solo se bloquea la SIGUIENTE llamada.
+  const [disponibleSeg, setDisponibleSeg] = useState(null);
+  const [cortadaPorMinutos, setCortadaPorMinutos] = useState(false);
   const [muted, setMuted] = useState(false);
   const [speakerOn, setSpeakerOn] = useState(false);
   const [showKeypad, setShowKeypad] = useState(false);
@@ -144,6 +149,22 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
         return;
       }
 
+      // Minutos disponibles en este momento -- define el tope de ESTA llamada.
+      const { data: perfil } = await supabase
+        .from('profiles')
+        .select('minutos_disponibles_segundos')
+        .eq('id', myIdRef.current)
+        .single();
+      const disp = perfil?.minutos_disponibles_segundos;
+      if (typeof disp === 'number') {
+        if (disp <= 0) {
+          setErrorMsg('No tienes minutos disponibles. Pídele a tu administrador que te asigne más.');
+          setPhase('error');
+          return;
+        }
+        setDisponibleSeg(disp);
+      }
+
       const client = await getTelnyxClient();
       clientRef.current = client;
 
@@ -209,6 +230,18 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
       return () => clearInterval(intervalRef.current);
     }
   }, [phase, status]);
+
+  // Corte automático al agotar los minutos disponibles.
+  const restanteSeg = disponibleSeg == null ? null : disponibleSeg - elapsed;
+  useEffect(() => {
+    if (phase !== 'llamada' || restanteSeg == null || cortadaPorMinutos) return;
+    if (restanteSeg <= 0) {
+      setCortadaPorMinutos(true);
+      setErrorMsg('La llamada se finalizó automáticamente: se agotaron tus minutos disponibles.');
+      handleFinalizar();
+    }
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [restanteSeg, phase]);
 
   // Registra la llamada en `calls` apenas contesta, no cuando el operador
   // guarda el resultado -- si se cierra la pestaña o se cierra sin
@@ -473,6 +506,12 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-status-custom-text)' }} />
               <span style={{ fontSize: '0.85rem', color: 'var(--color-status-custom-text)', fontWeight: 600 }}>{STATUS_LABEL[status]}</span>
             </div>
+
+            {restanteSeg != null && restanteSeg <= 60 && restanteSeg > 0 && (
+              <p style={{ color: 'var(--color-danger)', fontSize: '0.82rem', fontWeight: 600, textAlign: 'center', marginBottom: '0.75rem' }}>
+                ⚠️ Te quedan {restanteSeg} s de minutos disponibles. La llamada se cortará automáticamente.
+              </p>
+            )}
 
             <div style={{ display: 'flex', flexDirection: 'column', alignItems: 'center', marginBottom: '1rem' }}>
               <div
