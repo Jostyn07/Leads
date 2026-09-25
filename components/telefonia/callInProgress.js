@@ -219,7 +219,17 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
     if (status !== 'conectada' || callRowIdRef.current) return;
 
     (async () => {
+      // Respaldo: si la notificación 'active' no trajo los IDs, se leen
+      // directo del objeto Call. Sin telnyx_call_control_id el webhook no
+      // encuentra la fila ("sin fila correspondiente en calls") y la
+      // grabación se pierde.
+      if (!telnyxIDsRef.current?.telnyxCallControlId && telnyxCallRef.current?.telnyxIDs) {
+        telnyxIDsRef.current = telnyxCallRef.current.telnyxIDs;
+      }
       const ids = telnyxIDsRef.current || {};
+      if (!ids.telnyxCallControlId) {
+        console.warn('Llamada sin telnyxCallControlId: la grabación no se podrá asociar.', telnyxCallRef.current);
+      }
       const { data, error } = await supabase
         .from('calls')
         .insert({
@@ -241,6 +251,7 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
         // pudiendo hablar. Se pierde la asociación temprana, pero
         // handleGuardarResultado todavía puede insertar al final.
         console.error('No se pudo registrar el inicio de la llamada:', error.message);
+        setErrorMsg('Aviso: no se pudo registrar la llamada (' + error.message + '). Se intentará de nuevo al guardar el resultado.');
       } else {
         callRowIdRef.current = data.id;
       }
@@ -266,7 +277,14 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
     if (phase === 'llamada') {
       const ok = window.confirm('¿Finalizar la llamada?');
       if (!ok) return;
-      telnyxCallRef.current?.hangup().catch(() => {});
+      // No se cierra directo: se pasa a la pantalla de resultado para
+      // que la llamada quede registrada (antes se perdía el registro).
+      handleFinalizar();
+      return;
+    }
+    if (phase === 'resultado') {
+      handleCerrarSinGuardar();
+      return;
     }
     onClose?.();
   }
@@ -281,6 +299,47 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
 
   function sendDigit(k) {
     telnyxCallRef.current?.dtmf(k);
+  }
+
+  // "Cerrar sin guardar" antes solo cerraba el modal: si la llamada no
+  // alcanzó a contestar, no quedaba NINGÚN registro, y si contestó, la
+  // fila quedaba sin duración ni hora_fin. Ahora siempre se cierra el
+  // registro (sin resultado) para que aparezca en Llamadas.
+  async function handleCerrarSinGuardar() {
+    setSaving(true);
+    const ids = telnyxIDsRef.current || {};
+    let error;
+    if (callRowIdRef.current) {
+      ({ error } = await supabase
+        .from('calls')
+        .update({
+          estado_tecnico: 'finalizada',
+          duracion_segundos: elapsed,
+          hora_fin: new Date().toISOString(),
+        })
+        .eq('id', callRowIdRef.current));
+    } else if (horaInicioRef.current) {
+      ({ error } = await supabase.from('calls').insert({
+        user_id: myIdRef.current,
+        lead_id: call.leadId || null,
+        tipo: call.leadId ? 'lead' : 'externa',
+        numero: call.numero,
+        estado_tecnico: 'finalizada',
+        duracion_segundos: elapsed,
+        telnyx_call_control_id: ids.telnyxCallControlId || null,
+        telnyx_call_leg_id: ids.telnyxLegId || null,
+        telnyx_call_session_id: ids.telnyxSessionId || null,
+        hora_inicio: horaInicioRef.current,
+        hora_fin: new Date().toISOString(),
+      }));
+    }
+    setSaving(false);
+    if (error) {
+      setErrorMsg('No se pudo guardar el registro de la llamada: ' + error.message);
+      return;
+    }
+    await onSaveResult?.({ resultado: null, duracionSegundos: elapsed });
+    onClose?.();
   }
 
   async function handleGuardarResultado() {
@@ -409,6 +468,7 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
           </div>
         ) : phase === 'llamada' ? (
           <>
+            {errorMsg && <p style={{ color: 'var(--color-danger)', fontSize: '0.8rem', marginBottom: '0.75rem', textAlign: 'center' }}>{errorMsg}</p>}
             <div style={{ display: 'flex', alignItems: 'center', justifyContent: 'center', gap: 6, marginBottom: '1.1rem' }}>
               <span style={{ width: 8, height: 8, borderRadius: '50%', background: 'var(--color-status-custom-text)' }} />
               <span style={{ fontSize: '0.85rem', color: 'var(--color-status-custom-text)', fontWeight: 600 }}>{STATUS_LABEL[status]}</span>
@@ -538,7 +598,7 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
             {errorMsg && <p style={{ color: 'var(--color-danger)', fontSize: '0.82rem', marginBottom: '0.75rem' }}>{errorMsg}</p>}
 
             <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end' }}>
-              <button className="btn btn-secondary" onClick={onClose}>Cerrar sin guardar</button>
+              <button className="btn btn-secondary" onClick={handleCerrarSinGuardar} disabled={saving}>Cerrar sin guardar</button>
               <button className="btn btn-primary" onClick={handleGuardarResultado} disabled={!resultado || saving}>
                 {saving ? 'Guardando…' : 'Guardar resultado'}
               </button>

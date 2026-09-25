@@ -85,6 +85,18 @@ export default function LlamadasPage() {
   const [recordingBusyId, setRecordingBusyId] = useState(null);
   const [recordingError, setRecordingError] = useState(null);
 
+  // Llamadas hechas desde otras pantallas (tarjetas de leads, detalle)
+  // pasan por el CallProvider global, que avisa con este evento.
+  useEffect(() => {
+    function onCallsChanged() {
+      loadCalls();
+      loadStats();
+    }
+    window.addEventListener('calls:changed', onCallsChanged);
+    return () => window.removeEventListener('calls:changed', onCallsChanged);
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, []);
+
   async function handlePlayRecording(recordingId) {
     setRecordingError(null);
     setRecordingBusyId(recordingId);

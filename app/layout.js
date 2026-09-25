@@ -5,6 +5,7 @@ import AppShell from '../components/ui/appShell';
 import SubdomainGuard from '../components/ui/subdomainGuard';
 import AuthWatcher from '../components/ui/authWatcher';
 import { ThemeProvider } from '../lib/theme/themeContext';
+import { CallProvider } from '../lib/telefonia/callContext';
 
 export const metadata = {
   title: 'Plataforma de Leads',
@@ -39,7 +40,9 @@ export default function RootLayout({ children }) {
           <SubdomainGuard />
           <BackgroundPicker />
           <Sidebar />
-          <AppShell>{children}</AppShell>
+          <CallProvider>
+            <AppShell>{children}</AppShell>
+          </CallProvider>
         </ThemeProvider>
       </body>
     </html>

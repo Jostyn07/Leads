@@ -1,11 +1,10 @@
 'use client';
 
 import { useState } from 'react';
-import { createPortal } from 'react-dom';
 import { getInitials, getAvatarColors } from './avatarColor';
 import CardMenu from '../ui/cardMenu';
 import { supabase } from '../../lib/supabase/client';
-import CallInProgress from '../telefonia/callInProgress';
+import { useCall } from '../../lib/telefonia/callContext';
 
 // Colorea la cápsula de embudo según su tipo. En este modelo el embudo
 // ES el estado (no hay una capa de "etapa" separada) — ver la
@@ -49,36 +48,20 @@ function getFunnelBadge(funnel) {
 
 export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid', onChanged }) {
   const [archiving, setArchiving] = useState(false);
-  // Llamada activa lanzada desde esta tarjeta -- se marca aquí mismo con
-  // Telnyx (mismo CallInProgress que usa /llamadas), sin salir de /leads.
-  const [activeCall, setActiveCall] = useState(null);
+  // La llamada se lanza en el CallProvider global (layout raíz), no
+  // dentro de la tarjeta: si la lista se recarga o cambias de página
+  // durante la llamada, no se pierde el registro ni la grabación.
+  const { activeCall, startCall } = useCall();
 
   function handleCall(e) {
     e.preventDefault();
     e.stopPropagation();
     if (!lead.phone) return;
-    setActiveCall({ name: lead.name, numero: lead.phone, leadId: lead.id });
+    startCall(
+      { name: lead.name, numero: lead.phone, leadId: lead.id, _ts: Date.now() },
+      { onSaved: () => onChanged?.() }
+    );
   }
-
-  // El modal vive dentro del árbol React de la tarjeta: se corta la
-  // propagación para que sus clics no disparen el onClick de la tarjeta.
-  // Se renderiza en document.body con un portal: la tarjeta tiene
-  // transform/backdrop-filter, que encierran cualquier position:fixed
-  // dentro de ella. Así sale centrado en pantalla, igual que en /llamadas.
-  const CallModal = activeCall && typeof document !== 'undefined' && createPortal(
-    <div onClick={(e) => e.stopPropagation()}>
-      <CallInProgress
-        call={activeCall}
-        onClose={() => setActiveCall(null)}
-        onSaveResult={async () => {
-          // CallInProgress ya guardó la fila en `calls`; refrescamos la
-          // lista para que el estado del lead se actualice.
-          onChanged?.();
-        }}
-      />
-    </div>,
-    document.body
-  );
 
   const rel = Array.isArray(lead.lead_funnel) ? lead.lead_funnel[0] : lead.lead_funnel;
   const funnel = rel ? (Array.isArray(rel.funnels) ? rel.funnels[0] : rel.funnels) : null;
@@ -191,7 +174,6 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
         </div>
         {ActionButtons}
         <CardMenu items={menuItems} />
-        {CallModal}
       </div>
     );
   }
@@ -233,7 +215,6 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
           📞 Llamar
         </button>
       </div>
-      {CallModal}
     </div>
   );
 }
