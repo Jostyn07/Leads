@@ -60,7 +60,7 @@ export default function LeadDetailPage() {
       .from('leads')
       .select(
         `
-        id, name, phone, address, email, status, owner_id,
+        id, name, phone, address, email, status, owner_id, protegido_owner,
         lead_funnel ( funnel_id, funnels ( name ) ),
         owner:profiles!leads_owner_id_fkey ( full_name )
       `
@@ -244,7 +244,9 @@ export default function LeadDetailPage() {
                 WhatsApp
               </a>
             )}
-            {lead.status !== 'archived' && (
+            {/* Los leads asignados por el owner no se pueden archivar (la base
+                de datos también lo bloquea con un trigger). */}
+            {lead.status !== 'archived' && !lead.protegido_owner && (
               <Button variant="danger" onClick={handleArchive}>
                 Archivar
               </Button>

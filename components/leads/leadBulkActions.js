@@ -51,12 +51,23 @@ export default function LeadBulkActions({ selectedIds, onDone }) {
 
     setWorking(true);
     setErrorMsg(null);
-    const { error } = await supabase.from('leads').update({ status: 'archived' }).in('id', selectedIds);
+    // Se excluyen los leads asignados por el owner: esos no se pueden
+    // archivar (si se incluyeran, el trigger de la base rechazaría TODO el lote).
+    const { data, error } = await supabase
+      .from('leads')
+      .update({ status: 'archived' })
+      .in('id', selectedIds)
+      .eq('protegido_owner', false)
+      .select('id');
     setWorking(false);
 
     if (error) {
       setErrorMsg(error.message);
     } else {
+      const omitidos = selectedIds.length - (data?.length ?? 0);
+      if (omitidos > 0) {
+        window.alert(`${omitidos} lead(s) no se archivaron porque fueron asignados por el dueño de la plataforma.`);
+      }
       onDone?.();
     }
   }

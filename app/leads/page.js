@@ -155,9 +155,9 @@ export default function LeadsPage() {
       .from('leads')
       .select(
         specificFunnel
-          ? `id, name, phone, address, email, status, state,
+          ? `id, name, phone, address, email, status, state, protegido_owner,
              lead_funnel!inner ( funnel_id, funnels ( name, is_default_stage, is_protected ) )`
-          : `id, name, phone, address, email, status, state,
+          : `id, name, phone, address, email, status, state, protegido_owner,
              lead_funnel ( funnel_id, funnels ( name, is_default_stage, is_protected ) )`,
         { count: 'exact' }
       )

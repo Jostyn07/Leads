@@ -76,7 +76,8 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
     setArchiving(true);
     const { error } = await supabase.from('leads').update({ status: 'archived' }).eq('id', lead.id);
     setArchiving(false);
-    if (!error) onChanged?.();
+    if (error) window.alert(error.message);
+    else onChanged?.();
   }
 
   function handleCopyPhone() {
@@ -86,7 +87,8 @@ export default function LeadCard({ lead, selected, onToggleSelect, view = 'grid'
   const menuItems = [
     { label: 'Ver información', onClick: () => (window.location.href = `/leads/${lead.id}`) },
     { label: 'Copiar teléfono', onClick: handleCopyPhone },
-    { label: 'Archivar', onClick: handleArchive, danger: true },
+    // Los leads asignados por el owner no se pueden archivar.
+    ...(lead.protegido_owner ? [] : [{ label: 'Archivar', onClick: handleArchive, danger: true }]),
   ];
 
   const whatsappHref = `https://wa.me/1${lead.phone}`;
