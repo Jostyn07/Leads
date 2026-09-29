@@ -19,6 +19,7 @@ const SETTINGS_LINKS = [
   { href: '/settings/usuarios', label: 'Usuarios' },
   { href: '/settings/plantillas', label: 'Plantillas' },
   { href: '/settings/organizaciones', label: 'Organizaciones', ownerOnly: true },
+  { href: '/settings/telnyx', label: 'Costos Telnyx', ownerOnly: true },
   { href: '/settings', label: 'Preferencias' },
   { href: '/settings/integraciones', label: 'Integraciones' },
 ];
