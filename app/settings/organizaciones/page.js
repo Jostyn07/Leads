@@ -69,14 +69,14 @@ function OrganizacionesPageContent() {
   }
 
   async function handleSaveBolsa(org, minutosTotal) {
-    const segundos = Math.max(0, Math.round(Number(minutosTotal) || 0)) * 60;
-    const { data, error } = await supabase
-      .from('organizations')
-      .update({ minutos_bolsa_segundos: segundos })
-      .eq('id', org.id)
-      .select('id');
+    // Pasa por una función de la base (valida que seas owner y que la
+    // bolsa no quede por debajo de lo ya repartido): la tabla
+    // organizations no admite UPDATE directo desde el cliente.
+    const { error } = await supabase.rpc('set_org_minutos_bolsa', {
+      p_org: org.id,
+      p_minutos: Math.max(0, Math.round(Number(minutosTotal) || 0)),
+    });
     if (error) return error;
-    if (!data?.length) return { message: 'No se pudo guardar — no tienes permiso.' };
     setEditingBolsa(null);
     load();
     return null;
