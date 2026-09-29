@@ -19,6 +19,16 @@ function formatDuracion(seg) {
   return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
 }
 
+// "hace 5 min", "hace 2 h", "hace 3 d"
+function haceCuanto(ms) {
+  const min = Math.floor(ms / 60000);
+  if (min < 1) return 'hace un momento';
+  if (min < 60) return `hace ${min} min`;
+  const h = Math.floor(min / 60);
+  if (h < 24) return `hace ${h} h`;
+  return `hace ${Math.floor(h / 24)} d`;
+}
+
 const TABS = [
   { href: '/settings/usuarios', label: 'Usuarios' },
   { href: '/settings/numeros', label: 'Números' },
@@ -229,26 +239,31 @@ export default function UsuariosPage() {
   const refreshRef = useRef(null);
   refreshRef.current = refresh;
 
+  // Última llamada terminada por usuario: { [user_id]: epoch ms }
+  const [ultimaLlamada, setUltimaLlamada] = useState({});
+
+  // Estado de llamada de cada usuario visible. Pasa por una función de la
+  // base (security definer) porque la RLS de `calls` no deja al dueño ver
+  // las llamadas de otras organizaciones — y solo devuelve user_id y
+  // tiempos, nada del contenido de la llamada.
   async function loadEnLlamada() {
-    // Se ignoran filas de más de 4 h: una pestaña cerrada a la fuerza
-    // puede dejar una llamada "abierta" que en realidad ya terminó.
-    const desde = new Date(Date.now() - 4 * 3600 * 1000).toISOString();
-    const { data } = await supabase
-      .from('calls')
-      .select('user_id, hora_inicio, created_at')
-      .eq('estado_tecnico', 'contestada')
-      .is('hora_fin', null)
-      .gte('created_at', desde);
+    const { data, error } = await supabase.rpc('usuarios_estado_llamada');
+    if (error) return;
     const map = {};
-    (data ?? []).forEach((c) => {
-      const t = new Date(c.hora_inicio || c.created_at).getTime();
-      if (!map[c.user_id] || t < map[c.user_id]) map[c.user_id] = t;
+    const ult = {};
+    (data ?? []).forEach((r) => {
+      if (r.en_llamada_desde) map[r.user_id] = new Date(r.en_llamada_desde).getTime();
+      if (r.ultima_llamada) ult[r.user_id] = new Date(r.ultima_llamada).getTime();
     });
     setEnLlamada(map);
+    setUltimaLlamada(ult);
   }
 
   useEffect(() => {
     loadEnLlamada();
+    // Respaldo: aunque Realtime no entregue un evento (p. ej. llamadas de
+    // otra organización que la RLS no deja ver), se consulta cada 5 s.
+    const poll = setInterval(loadEnLlamada, 5000);
     let timer = null;
     const programar = () => {
       // Varios eventos seguidos (p. ej. fin de llamada + descuento de
@@ -266,6 +281,7 @@ export default function UsuariosPage() {
       .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'organizations' }, programar)
       .subscribe();
     return () => {
+      clearInterval(poll);
       clearTimeout(timer);
       supabase.removeChannel(channel);
     };
@@ -274,8 +290,7 @@ export default function UsuariosPage() {
   // Reloj de 1 s solo mientras alguien está en llamada.
   const hayLlamadas = Object.keys(enLlamada).length > 0;
   useEffect(() => {
-    if (!hayLlamadas) return;
-    const id = setInterval(() => setAhora(Date.now()), 1000);
+    const id = setInterval(() => setAhora(Date.now()), hayLlamadas ? 1000 : 30000);
     return () => clearInterval(id);
   }, [hayLlamadas]);
 
@@ -456,16 +471,7 @@ export default function UsuariosPage() {
     {
       key: 'estado',
       label: 'Estado',
-      render: (u) => enLlamada[u.id] ? (
-        <span
-          className="status-pill"
-          title="En llamada ahora mismo"
-          style={{ background: 'var(--color-status-error-bg, rgba(239,68,68,0.12))', color: 'var(--color-status-error-text, #ef4444)', borderColor: 'var(--color-status-error-border, rgba(239,68,68,0.35))', display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
-        >
-          <span className="pulse-dot" style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor', animation: 'pulseDot 1.2s ease-in-out infinite' }} />
-          En llamada · {formatDuracion(segEnCurso(u))}
-        </span>
-      ) : (
+      render: (u) => (
         <span
           className="status-pill"
           style={
@@ -477,6 +483,33 @@ export default function UsuariosPage() {
           {u.estado === 'activo' ? 'Activo' : 'Inactivo'}
         </span>
       ),
+    },
+    {
+      key: 'en_llamada',
+      label: 'Llamada',
+      render: (u) =>
+        enLlamada[u.id] ? (
+          <span
+            className="status-pill"
+            title="En llamada ahora mismo"
+            style={{ background: 'var(--color-status-error-bg, rgba(239,68,68,0.12))', color: 'var(--color-status-error-text, #ef4444)', borderColor: 'var(--color-status-error-border, rgba(239,68,68,0.35))', display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+          >
+            <span style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor', animation: 'pulseDot 1.2s ease-in-out infinite' }} />
+            En llamada · {formatDuracion(segEnCurso(u))}
+          </span>
+        ) : (
+          <div style={{ display: 'flex', flexDirection: 'column', gap: 2 }}>
+            <span
+              className="status-pill"
+              style={{ background: 'var(--color-status-none-bg)', color: 'var(--color-status-none-text)', borderColor: 'var(--color-status-none-border)', whiteSpace: 'nowrap', alignSelf: 'flex-start' }}
+            >
+              Sin llamada
+            </span>
+            <span style={{ fontSize: '0.72rem', color: 'var(--color-text-tertiary)', whiteSpace: 'nowrap' }}>
+              {ultimaLlamada[u.id] ? `Última: ${haceCuanto(ahora - ultimaLlamada[u.id])}` : 'Nunca ha llamado'}
+            </span>
+          </div>
+        ),
     },
     { key: 'ultimo_acceso', label: 'Último acceso', render: () => <span style={{ color: 'var(--color-text-tertiary)' }}>—</span> },
     {
