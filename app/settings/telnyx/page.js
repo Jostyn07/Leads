@@ -1,6 +1,8 @@
 'use client';
 
 // Costos de Telnyx — SOLO para el dueño (owner).
+// PRIVACIDAD: esta página nunca muestra los números a los que se llama
+// (somos un servicio para terceros); solo costos, tiempos y quién llamó.
 // Los costos salen de los registros de detalle (CDR) de Telnyx, que la
 // Edge Function `telnyx-sync-costs` trae y asocia a cada llamada.
 
@@ -49,6 +51,8 @@ function TelnyxCostosContent() {
   const [errorMsg, setErrorMsg] = useState(null);
   const [syncing, setSyncing] = useState(false);
   const [syncMsg, setSyncMsg] = useState(null);
+  const [productos, setProductos] = useState([]); // gasto por producto (incluye lo que no es llamada)
+  const [saldos, setSaldos] = useState([]); // fotos del saldo de Telnyx
 
   const hasta = new Date();
   const desde = new Date(Date.now() - (dias - 1) * 86400000);
@@ -61,9 +65,16 @@ function TelnyxCostosContent() {
   async function load() {
     setLoading(true);
     setErrorMsg(null);
-    const { data, error } = await supabase.rpc('telnyx_costos', { p_desde: isoDia(desde), p_hasta: isoDia(hasta) });
-    if (error) setErrorMsg(error.message);
-    else setRows(data ?? []);
+    const rango = { p_desde: isoDia(desde), p_hasta: isoDia(hasta) };
+    const [c, u, s] = await Promise.all([
+      supabase.rpc('telnyx_costos', rango),
+      supabase.rpc('telnyx_uso_por_producto', rango),
+      supabase.rpc('telnyx_saldos', { p_desde: isoDia(desde) }),
+    ]);
+    if (c.error) setErrorMsg(c.error.message);
+    else setRows(c.data ?? []);
+    setProductos(u.data ?? []);
+    setSaldos(s.data ?? []);
     setLoading(false);
   }
 
@@ -84,7 +95,7 @@ function TelnyxCostosContent() {
     const total = Object.values(data.registros || {}).reduce((a, b) => a + (Number(b) || 0), 0);
     setSyncMsg({
       tipo: data.errores?.length ? 'aviso' : 'ok',
-      texto: `Sincronizados ${total} registros de Telnyx (${data.vinculados_ahora} asociados a llamadas).` + (data.errores?.length ? ` Avisos: ${data.errores.join(' · ')}` : ''),
+      texto: `Sincronizados ${total} registros de Telnyx (${data.vinculados_ahora} asociados a llamadas).` + (data.saldo != null ? ` Saldo actual: ${usd(data.saldo)}.` : '') + (data.errores?.length ? ` Avisos: ${data.errores.join(' · ')}` : ''),
     });
     load();
   }
@@ -96,7 +107,9 @@ function TelnyxCostosContent() {
     const porLlamada = new Map();
     let gasto = 0;
     rows.forEach((r) => {
-      const key = r.call_id || `cdr:${r.cdr_id}`;
+      // `grupo` une los dos tramos (WebRTC + línea) de la misma llamada,
+      // aunque no se haya podido asociar a una llamada de la plataforma.
+      const key = r.grupo || r.call_id || `cdr:${r.cdr_id}`;
       const costo = Number(r.costo) || 0;
       gasto += costo;
       const cur = porLlamada.get(key) || {
@@ -105,7 +118,6 @@ function TelnyxCostosContent() {
         fecha: r.started_at,
         usuario: r.usuario,
         organizacion: r.organizacion,
-        numero: r.numero,
         resultado: r.resultado,
         segundos: 0,
         costoWebrtc: 0,
@@ -152,7 +164,40 @@ function TelnyxCostosContent() {
       porUsuario[k] = u;
     });
 
+    // Gasto por producto según Telnyx (sumando tramos del rango)
+    const porProducto = {};
+    productos.forEach((p) => {
+      const k = p.producto + (p.detalle ? ` · ${p.detalle}` : '');
+      porProducto[k] = (porProducto[k] || 0) + (Number(p.costo) || 0);
+    });
+    const listaProductos = Object.entries(porProducto)
+      .map(([nombre, costo]) => ({ nombre, costo }))
+      .sort((a, b) => b.costo - a.costo);
+    const totalProductos = listaProductos.reduce((a, p) => a + p.costo, 0);
+
+    // Caída del saldo entre la primera y la última foto del rango, y el
+    // gasto en llamadas en ese MISMO intervalo -> lo demás son otros cargos.
+    let caidaSaldo = null;
+    let otrosPorSaldo = null;
+    if (saldos.length >= 2) {
+      const primero = saldos[0];
+      const ultimo = saldos[saldos.length - 1];
+      caidaSaldo = Number(primero.saldo) - Number(ultimo.saldo);
+      const llamadasIntervalo = rows
+        .filter((r) => r.started_at >= primero.tomado_at && r.started_at <= ultimo.tomado_at)
+        .reduce((a, r) => a + (Number(r.costo) || 0), 0);
+      otrosPorSaldo = Math.max(0, caidaSaldo - llamadasIntervalo);
+    }
+    const otrosPorProducto = totalProductos > 0 ? Math.max(0, totalProductos - gasto) : null;
+
     return {
+      listaProductos,
+      totalProductos,
+      caidaSaldo,
+      otrosCargos: otrosPorProducto ?? otrosPorSaldo,
+      fuenteOtros: otrosPorProducto != null ? 'productos' : otrosPorSaldo != null ? 'saldo' : null,
+      saldoActual: saldos.length ? Number(saldos[saldos.length - 1].saldo) : null,
+      serieSaldo: saldos.map((s) => ({ x: s.tomado_at, y: Number(s.saldo) })),
       gasto,
       minutos,
       llamadas,
@@ -163,13 +208,12 @@ function TelnyxCostosContent() {
       sinAsociar: llamadas.filter((l) => !l.call_id).length,
     };
     // eslint-disable-next-line react-hooks/exhaustive-deps
-  }, [rows, dias]);
+  }, [rows, productos, saldos, dias]);
 
   const columnasLlamadas = [
     { key: 'fecha', label: 'Fecha', render: (l) => new Date(l.fecha).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: 'numeric', minute: '2-digit' }) },
     { key: 'usuario', label: 'Usuario', render: (l) => l.usuario || <span style={{ color: 'var(--color-text-tertiary)' }}>Sin asociar</span> },
     { key: 'organizacion', label: 'Organización', render: (l) => l.organizacion || '—' },
-    { key: 'numero', label: 'Número', render: (l) => l.numero || '—' },
     { key: 'dur', label: 'Facturado', render: (l) => formatDur(l.segundos) },
     { key: 'webrtc', label: 'WebRTC', render: (l) => usd(l.costoWebrtc, 4) },
     { key: 'linea', label: 'Línea', render: (l) => usd(l.costoLinea, 4) },
@@ -214,7 +258,7 @@ function TelnyxCostosContent() {
 
       {loading ? (
         <p>Cargando…</p>
-      ) : rows.length === 0 ? (
+      ) : rows.length === 0 && productos.length === 0 && saldos.length === 0 ? (
         <div className="card" style={{ padding: '2rem', textAlign: 'center' }}>
           <p style={{ fontWeight: 600, marginBottom: 6 }}>Todavía no hay costos en este rango.</p>
           <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
@@ -224,7 +268,19 @@ function TelnyxCostosContent() {
       ) : (
         <>
           <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(170px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
-            <Kpi label="Gasto total" value={usd(resumen.gasto)} />
+            {resumen.saldoActual != null && <Kpi label="Saldo actual en Telnyx" value={usd(resumen.saldoActual)} />}
+            <Kpi label="Gasto en llamadas" value={usd(resumen.gasto)} />
+            <Kpi
+              label="Otros cargos (no llamadas)"
+              value={resumen.otrosCargos != null ? usd(resumen.otrosCargos) : '—'}
+              sub={
+                resumen.fuenteOtros === 'productos'
+                  ? 'Según el reporte por producto de Telnyx'
+                  : resumen.fuenteOtros === 'saldo'
+                    ? 'Caída del saldo menos llamadas'
+                    : 'Sincroniza de nuevo más adelante para calcularlo'
+              }
+            />
             <Kpi label="Minutos facturados" value={resumen.minutos.toLocaleString('es', { maximumFractionDigits: 1 })} />
             <Kpi label="Costo promedio por minuto" value={usd(resumen.costoMin, 4)} />
             <Kpi label="Costo promedio por llamada" value={usd(resumen.costoLlamada, 4)} />
@@ -244,6 +300,49 @@ function TelnyxCostosContent() {
             </div>
           </div>
 
+          <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(420px, 1fr))', gap: '0.75rem', marginBottom: '1.25rem' }}>
+            <div className="card" style={{ padding: '1rem 1.1rem' }}>
+              <h2 style={{ fontSize: '0.95rem', fontWeight: 650, marginBottom: 2 }}>Gasto por producto de Telnyx</h2>
+              <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
+                Incluye lo que no es llamada: renta de números, grabaciones, etc.
+              </p>
+              {resumen.listaProductos.length === 0 ? (
+                <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>Telnyx no devolvió gasto por producto para este rango.</p>
+              ) : (
+                <div style={{ display: 'flex', flexDirection: 'column', gap: 8 }}>
+                  {resumen.listaProductos.map((p) => (
+                    <div key={p.nombre}>
+                      <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', marginBottom: 3 }}>
+                        <span>{p.nombre}</span>
+                        <strong style={{ fontVariantNumeric: 'tabular-nums' }}>{usd(p.costo, 4)}</strong>
+                      </div>
+                      <div className="progress-track" style={{ width: '100%' }}>
+                        <div className="progress-fill" style={{ width: `${resumen.totalProductos ? (p.costo / resumen.totalProductos) * 100 : 0}%` }} />
+                      </div>
+                    </div>
+                  ))}
+                  <div style={{ display: 'flex', justifyContent: 'space-between', fontSize: '0.85rem', borderTop: '1px solid var(--color-border)', paddingTop: 8, marginTop: 4 }}>
+                    <span>Total según Telnyx</span>
+                    <strong>{usd(resumen.totalProductos, 4)}</strong>
+                  </div>
+                </div>
+              )}
+            </div>
+            <div className="card" style={{ padding: '1rem 1.1rem' }}>
+              <h2 style={{ fontSize: '0.95rem', fontWeight: 650, marginBottom: 2 }}>Saldo de Telnyx</h2>
+              <p style={{ fontSize: '0.75rem', color: 'var(--color-text-muted)', marginBottom: '0.5rem' }}>
+                USD, una foto por cada sincronización{resumen.caidaSaldo != null ? ` · bajó ${usd(resumen.caidaSaldo)} en el rango` : ''}
+              </p>
+              {resumen.serieSaldo.length < 2 ? (
+                <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+                  {resumen.saldoActual != null ? `Saldo actual: ${usd(resumen.saldoActual)}. ` : ''}La gráfica aparece a partir de la segunda sincronización.
+                </p>
+              ) : (
+                <SaldoChart data={resumen.serieSaldo} />
+              )}
+            </div>
+          </div>
+
           <h2 style={{ fontSize: '1.05rem', fontWeight: 650, margin: '0.5rem 0 0.6rem' }}>Gasto por usuario</h2>
           <div style={{ marginBottom: '1.5rem' }}>
             <DataTable columns={columnasUsuarios} rows={resumen.porUsuario.map((u, i) => ({ ...u, id: i }))} emptyMessage="Sin datos." />
@@ -252,7 +351,7 @@ function TelnyxCostosContent() {
           <h2 style={{ fontSize: '1.05rem', fontWeight: 650, margin: '0.5rem 0 0.6rem' }}>Gasto por llamada</h2>
           <DataTable columns={columnasLlamadas} rows={resumen.llamadas.map((l) => ({ ...l, id: l.key }))} emptyMessage="Sin llamadas." />
           <p style={{ fontSize: '0.75rem', color: 'var(--color-text-tertiary)', marginTop: '0.6rem' }}>
-            Cada llamada suma dos cargos de Telnyx: el tramo WebRTC (navegador) y el tramo de línea telefónica. “Sin asociar” = registros de Telnyx que no se pudieron enlazar con una llamada de la plataforma.
+            Cada llamada suma dos cargos de Telnyx: el tramo WebRTC (navegador) y el tramo de línea telefónica. “Sin asociar” = llamadas de Telnyx que no se pudieron enlazar con una llamada de la plataforma. Por privacidad no se muestran los números marcados.
           </p>
         </>
       )}
@@ -413,6 +512,53 @@ function LineChart({ data, format }) {
         ))}
       </svg>
       <Tooltip hover={hover} />
+    </div>
+  );
+}
+
+// Saldo en el tiempo: puntos en su hora real (no por día).
+function SaldoChart({ data }) {
+  const [hover, setHover] = useState(null);
+  const t0 = new Date(data[0].x).getTime();
+  const t1 = new Date(data[data.length - 1].x).getTime() || t0 + 1;
+  const max = Math.max(...data.map((d) => d.y));
+  const ticks = ticksY(max);
+  const yMax = ticks[ticks.length - 1] || 1;
+  const innerW = W - PAD.left - PAD.right;
+  const innerH = H - PAD.top - PAD.bottom;
+  const pts = data.map((d) => {
+    const t = new Date(d.x).getTime();
+    return { ...d, cx: PAD.left + ((t - t0) / Math.max(1, t1 - t0)) * innerW, cy: PAD.top + innerH - (d.y / yMax) * innerH };
+  });
+  const fmt = (iso) => new Date(iso).toLocaleString('es-CO', { day: '2-digit', month: '2-digit', hour: 'numeric', minute: '2-digit' });
+  return (
+    <div style={{ position: 'relative' }}>
+      <svg viewBox={`0 0 ${W} ${H}`} width="100%" role="img" aria-label="Saldo de Telnyx" onMouseLeave={() => setHover(null)}>
+        {ticks.map((t) => {
+          const y = PAD.top + innerH - (t / yMax) * innerH;
+          return (
+            <g key={t}>
+              <line x1={PAD.left} x2={W - PAD.right} y1={y} y2={y} stroke="var(--color-border)" strokeWidth={1} />
+              <text x={PAD.left - 6} y={y + 4} textAnchor="end" fontSize={10} fill="var(--color-text-muted)">{usd(t)}</text>
+            </g>
+          );
+        })}
+        <text x={PAD.left} y={H - 8} fontSize={10} fill="var(--color-text-muted)">{fmt(data[0].x)}</text>
+        <text x={W - PAD.right} y={H - 8} textAnchor="end" fontSize={10} fill="var(--color-text-muted)">{fmt(data[data.length - 1].x)}</text>
+        <path d={pts.map((p, i) => `${i ? 'L' : 'M'}${p.cx},${p.cy}`).join(' ')} fill="none" stroke="var(--color-primary)" strokeWidth={2} strokeLinejoin="round" />
+        {pts.map((p) => (
+          <g key={p.x} onMouseEnter={() => setHover(p)}>
+            <circle cx={p.cx} cy={p.cy} r={12} fill="transparent" />
+            <circle cx={p.cx} cy={p.cy} r={hover?.x === p.x ? 5 : 3} fill="var(--color-primary)" stroke="var(--color-bg, #fff)" strokeWidth={2} />
+          </g>
+        ))}
+      </svg>
+      {hover && (
+        <div style={{ position: 'absolute', left: `${(hover.cx / W) * 100}%`, top: 0, transform: 'translateX(-50%)', background: 'var(--color-surface, var(--color-bg))', border: '1px solid var(--color-border)', borderRadius: 8, padding: '4px 8px', fontSize: 12, pointerEvents: 'none', whiteSpace: 'nowrap' }}>
+          <div style={{ color: 'var(--color-text-muted)' }}>{fmt(hover.x)}</div>
+          <div style={{ fontWeight: 650 }}>{usd(hover.y)}</div>
+        </div>
+      )}
     </div>
   );
 }
