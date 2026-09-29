@@ -189,6 +189,7 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
         // la pantalla de resultado, no se pierde el registro.
         if (telnyxState === 'hangup' || telnyxState === 'destroy') {
           clearInterval(intervalRef.current);
+          cerrarFilaAlColgar();
           setPhase((p) => (p === 'llamada' ? 'resultado' : p));
         }
       }
@@ -230,6 +231,32 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
       return () => clearInterval(intervalRef.current);
     }
   }, [phase, status]);
+
+  // Apenas la llamada se cuelga (de cualquier lado) se cierra la fila en
+  // `calls` con hora_fin: así en Usuarios deja de verse "En llamada" en
+  // tiempo real, aunque el operador tarde en elegir el resultado.
+  const conectadaDesdeRef = useRef(null);
+  const filaCerradaRef = useRef(false);
+  useEffect(() => {
+    if (status === 'conectada' && !conectadaDesdeRef.current) conectadaDesdeRef.current = Date.now();
+  }, [status]);
+
+  async function cerrarFilaAlColgar() {
+    if (filaCerradaRef.current) return;
+    // La fila se crea de forma asíncrona al contestar; se espera un poco
+    // por si el cuelgue llega justo después.
+    for (let i = 0; i < 10 && !callRowIdRef.current; i++) {
+      await new Promise((r) => setTimeout(r, 300));
+    }
+    if (!callRowIdRef.current || filaCerradaRef.current) return;
+    filaCerradaRef.current = true;
+    const dur = conectadaDesdeRef.current ? Math.round((Date.now() - conectadaDesdeRef.current) / 1000) : 0;
+    await supabase
+      .from('calls')
+      .update({ hora_fin: new Date().toISOString(), duracion_segundos: dur })
+      .eq('id', callRowIdRef.current)
+      .is('hora_fin', null);
+  }
 
   // Corte automático al agotar los minutos disponibles.
   const restanteSeg = disponibleSeg == null ? null : disponibleSeg - elapsed;
@@ -303,6 +330,7 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
       // Si ya estaba colgada del otro lado, hangup() puede rechazar --
       // no impide seguir a la pantalla de resultado.
     }
+    cerrarFilaAlColgar();
     setPhase('resultado');
   }
 

@@ -1,6 +1,6 @@
 'use client';
 
-import { useEffect, useState } from 'react';
+import { useEffect, useRef, useState } from 'react';
 import { supabase } from '../../../lib/supabase/client';
 import { getInitials, getAvatarColors } from '../../../components/leads/avatarColor';
 import Button from '../../../components/ui/button';
@@ -8,6 +8,16 @@ import Input from '../../../components/ui/input';
 import Modal from '../../../components/ui/modal';
 import CardMenu from '../../../components/ui/cardMenu';
 import DataTable from '../../../components/tables/dataTable';
+
+// mm:ss o h:mm:ss
+function formatDuracion(seg) {
+  const h = Math.floor(seg / 3600);
+  const m = Math.floor((seg % 3600) / 60);
+  const s = seg % 60;
+  const mm = String(m).padStart(2, '0');
+  const ss = String(s).padStart(2, '0');
+  return h > 0 ? `${h}:${mm}:${ss}` : `${mm}:${ss}`;
+}
 
 const TABS = [
   { href: '/settings/usuarios', label: 'Usuarios' },
@@ -207,6 +217,74 @@ export default function UsuariosPage() {
     setBolsa({ total: Number(r.bolsa) || 0, repartido: Number(r.repartido) || 0, sinRepartir: Number(r.sin_repartir) || 0 });
   }
 
+  // ------------------------------------------------------------------
+  // TIEMPO REAL
+  // - Llamadas en curso: filas de `calls` contestadas y sin hora_fin.
+  //   { [user_id]: epoch ms de inicio }. El contador corre en el cliente.
+  // - Cualquier cambio en profiles (minutos, estado, rol…) o en calls
+  //   refresca la tabla y las tarjetas sin recargar la página.
+  // ------------------------------------------------------------------
+  const [enLlamada, setEnLlamada] = useState({});
+  const [ahora, setAhora] = useState(Date.now());
+  const refreshRef = useRef(null);
+  refreshRef.current = refresh;
+
+  async function loadEnLlamada() {
+    // Se ignoran filas de más de 4 h: una pestaña cerrada a la fuerza
+    // puede dejar una llamada "abierta" que en realidad ya terminó.
+    const desde = new Date(Date.now() - 4 * 3600 * 1000).toISOString();
+    const { data } = await supabase
+      .from('calls')
+      .select('user_id, hora_inicio, created_at')
+      .eq('estado_tecnico', 'contestada')
+      .is('hora_fin', null)
+      .gte('created_at', desde);
+    const map = {};
+    (data ?? []).forEach((c) => {
+      const t = new Date(c.hora_inicio || c.created_at).getTime();
+      if (!map[c.user_id] || t < map[c.user_id]) map[c.user_id] = t;
+    });
+    setEnLlamada(map);
+  }
+
+  useEffect(() => {
+    loadEnLlamada();
+    let timer = null;
+    const programar = () => {
+      // Varios eventos seguidos (p. ej. fin de llamada + descuento de
+      // minutos) se agrupan en un solo refresco.
+      clearTimeout(timer);
+      timer = setTimeout(() => refreshRef.current?.(), 400);
+    };
+    const channel = supabase
+      .channel('usuarios-tiempo-real')
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'profiles' }, programar)
+      .on('postgres_changes', { event: '*', schema: 'public', table: 'calls' }, () => {
+        loadEnLlamada();
+        programar();
+      })
+      .on('postgres_changes', { event: 'UPDATE', schema: 'public', table: 'organizations' }, programar)
+      .subscribe();
+    return () => {
+      clearTimeout(timer);
+      supabase.removeChannel(channel);
+    };
+  }, []);
+
+  // Reloj de 1 s solo mientras alguien está en llamada.
+  const hayLlamadas = Object.keys(enLlamada).length > 0;
+  useEffect(() => {
+    if (!hayLlamadas) return;
+    const id = setInterval(() => setAhora(Date.now()), 1000);
+    return () => clearInterval(id);
+  }, [hayLlamadas]);
+
+  // Segundos que lleva en llamada este usuario (0 si no está en llamada).
+  function segEnCurso(u) {
+    const ini = enLlamada[u.id];
+    return ini ? Math.max(0, Math.floor((ahora - ini) / 1000)) : 0;
+  }
+
   useEffect(() => {
     if (currentUserId && !isOwner) loadBolsa();
     // eslint-disable-next-line react-hooks/exhaustive-deps
@@ -354,14 +432,16 @@ export default function UsuariosPage() {
       ),
     },
     { key: 'asignados', label: 'Min. asignados', render: (u) => minutos(u.minutos_asignados_segundos) },
-    { key: 'utilizados', label: 'Min. utilizados', render: (u) => minutos(u.minutos_utilizados_segundos) },
+    // Utilizados y disponibles incluyen, en vivo, la llamada en curso.
+    { key: 'utilizados', label: 'Min. utilizados', render: (u) => minutos((u.minutos_utilizados_segundos || 0) + segEnCurso(u)) },
     {
       key: 'disponibles',
       label: 'Min. disponibles',
       render: (u) => {
         const asignados = minutos(u.minutos_asignados_segundos);
-        const utilizados = minutos(u.minutos_utilizados_segundos);
-        const disponibles = minutos(u.minutos_disponibles_segundos);
+        const enCurso = segEnCurso(u);
+        const utilizados = minutos((u.minutos_utilizados_segundos || 0) + enCurso);
+        const disponibles = minutos((u.minutos_disponibles_segundos || 0) - enCurso);
         const pct = asignados > 0 ? Math.min(100, (utilizados / asignados) * 100) : 0;
         return (
           <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 120 }}>
@@ -376,7 +456,16 @@ export default function UsuariosPage() {
     {
       key: 'estado',
       label: 'Estado',
-      render: (u) => (
+      render: (u) => enLlamada[u.id] ? (
+        <span
+          className="status-pill"
+          title="En llamada ahora mismo"
+          style={{ background: 'var(--color-status-error-bg, rgba(239,68,68,0.12))', color: 'var(--color-status-error-text, #ef4444)', borderColor: 'var(--color-status-error-border, rgba(239,68,68,0.35))', display: 'inline-flex', alignItems: 'center', gap: 6, whiteSpace: 'nowrap' }}
+        >
+          <span className="pulse-dot" style={{ width: 7, height: 7, borderRadius: '50%', background: 'currentColor', animation: 'pulseDot 1.2s ease-in-out infinite' }} />
+          En llamada · {formatDuracion(segEnCurso(u))}
+        </span>
+      ) : (
         <span
           className="status-pill"
           style={
@@ -431,6 +520,7 @@ export default function UsuariosPage() {
         ))}
       </div>
 
+      <style>{'@keyframes pulseDot{0%,100%{opacity:1}50%{opacity:.25}}'}</style>
       {errorMsg && <p style={{ color: 'var(--color-danger)', marginBottom: '1rem' }}>{errorMsg}</p>}
 
       {stats && (
@@ -438,7 +528,12 @@ export default function UsuariosPage() {
           <StatCard icon="👥" value={stats.total} label="Usuarios totales" />
           <StatCard icon="🟢" value={stats.activos} label="Usuarios activos" color="var(--color-status-custom-text)" />
           <StatCard icon="🔴" value={stats.inactivos} label="Usuarios inactivos" color="var(--color-status-error-text)" />
-          <StatCard icon="📞" value={stats.conLlamadas} label="Con permisos de llamadas" />
+          <StatCard
+            icon="📞"
+            value={hayLlamadas ? `${Object.keys(enLlamada).length} en llamada` : stats.conLlamadas}
+            label={hayLlamadas ? `de ${stats.conLlamadas} con permisos de llamadas` : 'Con permisos de llamadas'}
+            color={hayLlamadas ? 'var(--color-status-error-text, #ef4444)' : undefined}
+          />
           {bolsa ? (
             <StatCard
               icon="⏱️"
