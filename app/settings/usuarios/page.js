@@ -634,10 +634,11 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
   if (!user || !form) return null;
 
   const options = isOwner ? ownerOrgNumbers ?? [] : assignableNumbers(phoneNumbers, isOwner, myNumberIds);
-  // (6) Un admin no puede subir ni su propio límite de minutos ni el de
-  // nadie por encima de lo que el owner le asignó a él -- el campo
-  // queda de solo lectura para el admin cuando se edita a sí mismo.
-  const minutosLocked = !isOwner && user.id === currentUserId;
+  // Con la bolsa por organización, el admin SÍ puede cambiar sus propios
+  // minutos: el tope es la bolsa (lo que ya tiene + lo sin repartir), y
+  // la base de datos lo valida igual. Solo se bloquea si no hay bolsa
+  // cargada (sin tope conocido).
+  const minutosLocked = !isOwner && user.id === currentUserId && !bolsa;
 
   function toggleNumero(id) {
     setSelectedNumeroIds((prev) => {
@@ -759,7 +760,7 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
         {!isOwner && (
           <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)', marginTop: -6 }}>
             {minutosLocked
-              ? 'Solo el dueño puede cambiar tus propios minutos asignados.'
+              ? 'No se pudo cargar la bolsa de la organización; recarga la página.'
               : topeMinSeg != null
                 ? `Máximo ${minutos(topeMinSeg)} min para este usuario (la organización tiene ${minutos(bolsa.sinRepartir)} min sin repartir).`
                 : ''}
