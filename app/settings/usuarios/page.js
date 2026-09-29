@@ -69,6 +69,11 @@ export default function UsuariosPage() {
   const [currentUserId, setCurrentUserId] = useState(null);
   const [myNumberIds, setMyNumberIds] = useState(null);
   const [myMinutosAsignados, setMyMinutosAsignados] = useState(null);
+  // Bolsa de minutos de la organización (en segundos). Los minutos se
+  // asignan a la ORGANIZACIÓN (el dueño) y el admin los reparte entre su
+  // equipo sin pasarse del total. null para el owner (él ve la bolsa de
+  // cada organización en Configuración → Organizaciones).
+  const [bolsa, setBolsa] = useState(null);
 
   const [editingUser, setEditingUser] = useState(null);
   const [addingMinutesTo, setAddingMinutesTo] = useState(null);
@@ -189,7 +194,23 @@ export default function UsuariosPage() {
   function refresh() {
     loadUsers(page, pageSize, debouncedSearch, filterRole, filterEstado, filterPlantilla, filterLlamadas);
     loadStats();
+    loadBolsa();
   }
+
+  async function loadBolsa() {
+    const { data, error } = await supabase.rpc('org_minutos_resumen');
+    if (error || !data?.length) {
+      setBolsa(null);
+      return;
+    }
+    const r = data[0];
+    setBolsa({ total: Number(r.bolsa) || 0, repartido: Number(r.repartido) || 0, sinRepartir: Number(r.sin_repartir) || 0 });
+  }
+
+  useEffect(() => {
+    if (currentUserId && !isOwner) loadBolsa();
+    // eslint-disable-next-line react-hooks/exhaustive-deps
+  }, [currentUserId, isOwner]);
 
   async function toggleLlamadas(user) {
     const { error } = await supabase
@@ -215,8 +236,13 @@ export default function UsuariosPage() {
     // owner le asignó a él -- se valida también aquí (además de
     // deshabilitar el campo en la UI) porque el input del formulario
     // se puede editar igual si alguien manipula el DOM.
-    if (!isOwner && payload.minutos_asignados_segundos > (myMinutosAsignados || 0)) {
-      return { message: `No puedes asignar más de ${minutos(myMinutosAsignados)} minutos -- es el límite que el dueño te asignó a ti.` };
+    // Tope = lo que ya tenía este usuario + lo que queda sin repartir en
+    // la bolsa de la organización. La base de datos también lo valida.
+    if (!isOwner && bolsa) {
+      const tope = bolsa.sinRepartir + (updated.minutos_asignados_segundos_original || 0);
+      if (payload.minutos_asignados_segundos > tope) {
+        return { message: `No puedes asignar más de ${minutos(tope)} minutos a este usuario: la organización solo tiene ${minutos(bolsa.sinRepartir)} min sin repartir.` };
+      }
     }
 
     const { data, error } = await supabase.from('profiles').update(payload).eq('id', updated.id).select('id');
@@ -233,7 +259,11 @@ export default function UsuariosPage() {
   }
 
   async function saveAddMinutes(user, minutosAAgregar) {
-    const nuevoTotal = (user.minutos_asignados_segundos || 0) + Math.round(Number(minutosAAgregar) || 0) * 60;
+    const agregarSeg = Math.round(Number(minutosAAgregar) || 0) * 60;
+    if (!isOwner && bolsa && agregarSeg > bolsa.sinRepartir) {
+      return { message: `La organización solo tiene ${minutos(bolsa.sinRepartir)} min sin repartir.` };
+    }
+    const nuevoTotal = (user.minutos_asignados_segundos || 0) + agregarSeg;
     const { error } = await supabase
       .from('profiles')
       .update({ minutos_asignados_segundos: nuevoTotal })
@@ -409,7 +439,15 @@ export default function UsuariosPage() {
           <StatCard icon="🟢" value={stats.activos} label="Usuarios activos" color="var(--color-status-custom-text)" />
           <StatCard icon="🔴" value={stats.inactivos} label="Usuarios inactivos" color="var(--color-status-error-text)" />
           <StatCard icon="📞" value={stats.conLlamadas} label="Con permisos de llamadas" />
-          <StatCard icon="⏱️" value={stats.minutosAsignados.toLocaleString('es')} label="Minutos asignados" />
+          {bolsa ? (
+            <StatCard
+              icon="⏱️"
+              value={`${minutos(bolsa.sinRepartir).toLocaleString('es')} / ${minutos(bolsa.total).toLocaleString('es')}`}
+              label="Min. sin repartir / bolsa de la organización"
+            />
+          ) : (
+            <StatCard icon="⏱️" value={stats.minutosAsignados.toLocaleString('es')} label="Minutos asignados" />
+          )}
         </div>
       )}
 
@@ -489,6 +527,7 @@ export default function UsuariosPage() {
         currentUserId={currentUserId}
         myNumberIds={myNumberIds}
         myMinutosAsignados={myMinutosAsignados}
+        bolsa={bolsa}
         onClose={() => setEditingUser(null)}
         onSave={saveEdit}
         onSaved={refresh}
@@ -498,6 +537,7 @@ export default function UsuariosPage() {
         user={addingMinutesTo}
         onClose={() => setAddingMinutesTo(null)}
         onSave={saveAddMinutes}
+        bolsa={isOwner ? null : bolsa}
       />
 
       <ChangePasswordModal
@@ -514,6 +554,7 @@ export default function UsuariosPage() {
         isOwner={isOwner}
         myNumberIds={myNumberIds}
         myMinutosAsignados={myMinutosAsignados}
+        bolsa={bolsa}
         onCreated={refresh}
       />
     </main>
@@ -532,7 +573,9 @@ function StatCard({ icon, value, label, color }) {
   );
 }
 
-function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, currentUserId, myNumberIds, myMinutosAsignados, onClose, onSave, onSaved }) {
+function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, currentUserId, myNumberIds, myMinutosAsignados, bolsa, onClose, onSave, onSaved }) {
+  // Tope de minutos para ESTE usuario = lo que ya tiene + lo sin repartir.
+  const topeMinSeg = bolsa ? bolsa.sinRepartir + (user?.minutos_asignados_segundos || 0) : null;
   const [form, setForm] = useState(null);
   const [selectedNumeroIds, setSelectedNumeroIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
@@ -557,6 +600,7 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
         plantilla_id: user.plantilla_id || '',
         llamadas_habilitadas: user.llamadas_habilitadas,
         minutos_asignados: minutos(user.minutos_asignados_segundos),
+        minutos_asignados_segundos_original: user.minutos_asignados_segundos || 0,
         organization_id: user.organization_id || '',
       });
       setError(null);
@@ -707,7 +751,7 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
           label="Minutos asignados"
           type="number"
           min={0}
-          max={!isOwner ? minutos(myMinutosAsignados) : undefined}
+          max={topeMinSeg != null ? minutos(topeMinSeg) : undefined}
           value={form.minutos_asignados}
           disabled={minutosLocked}
           onChange={(e) => setForm({ ...form, minutos_asignados: e.target.value })}
@@ -716,7 +760,9 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
           <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)', marginTop: -6 }}>
             {minutosLocked
               ? 'Solo el dueño puede cambiar tus propios minutos asignados.'
-              : `No puedes asignar más de ${minutos(myMinutosAsignados)} minutos — es tu propio límite.`}
+              : topeMinSeg != null
+                ? `Máximo ${minutos(topeMinSeg)} min para este usuario (la organización tiene ${minutos(bolsa.sinRepartir)} min sin repartir).`
+                : ''}
           </p>
         )}
 
@@ -753,7 +799,7 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
   );
 }
 
-function AddMinutesModal({ user, onClose, onSave }) {
+function AddMinutesModal({ user, onClose, onSave, bolsa }) {
   const [valor, setValor] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
@@ -778,7 +824,12 @@ function AddMinutesModal({ user, onClose, onSave }) {
         <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
           Actualmente tiene {minutos(user.minutos_asignados_segundos)} minutos asignados. Este valor se suma a lo que ya tiene.
         </p>
-        <Input label="Minutos a agregar" type="number" min={0} value={valor} onChange={(e) => setValor(e.target.value)} />
+        {bolsa && (
+          <p style={{ fontSize: '0.82rem', color: 'var(--color-text-tertiary)' }}>
+            La organización tiene {minutos(bolsa.sinRepartir)} min sin repartir de una bolsa de {minutos(bolsa.total)} min.
+          </p>
+        )}
+        <Input label="Minutos a agregar" type="number" min={0} max={bolsa ? minutos(bolsa.sinRepartir) : undefined} value={valor} onChange={(e) => setValor(e.target.value)} />
         {error && <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>}
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
@@ -792,7 +843,7 @@ function AddMinutesModal({ user, onClose, onSave }) {
 // Crear un usuario implica crear su cuenta de auth (auth.admin.inviteUserByEmail),
 // lo cual requiere service_role -- por eso pasa por la Edge Function
 // admin-create-user en vez de un insert directo desde el cliente.
-function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations, isOwner, myNumberIds, myMinutosAsignados, onCreated }) {
+function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations, isOwner, myNumberIds, myMinutosAsignados, bolsa, onCreated }) {
   const [form, setForm] = useState({ full_name: '', email: '', role: 'user', plantilla_id: '', llamadas_habilitadas: true, minutos_asignados: 0, organization_id: '' });
   const [selectedNumeroIds, setSelectedNumeroIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
@@ -838,8 +889,8 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations
     }
     // (6) Mismo tope que en edición: un admin no puede repartir más
     // minutos de los que el owner le asignó a él.
-    if (!isOwner && Math.round(Number(form.minutos_asignados) || 0) * 60 > (myMinutosAsignados || 0)) {
-      setError(`No puedes asignar más de ${minutos(myMinutosAsignados)} minutos — es tu propio límite.`);
+    if (!isOwner && bolsa && Math.round(Number(form.minutos_asignados) || 0) * 60 > bolsa.sinRepartir) {
+      setError(`La organización solo tiene ${minutos(bolsa.sinRepartir)} min sin repartir.`);
       return;
     }
     setSaving(true);
@@ -931,13 +982,13 @@ function CreateUserModal({ open, onClose, templates, phoneNumbers, organizations
           label="Minutos iniciales"
           type="number"
           min={0}
-          max={!isOwner ? minutos(myMinutosAsignados) : undefined}
+          max={!isOwner && bolsa ? minutos(bolsa.sinRepartir) : undefined}
           value={form.minutos_asignados}
           onChange={(e) => setForm({ ...form, minutos_asignados: e.target.value })}
         />
-        {!isOwner && (
+        {!isOwner && bolsa && (
           <p style={{ fontSize: '0.78rem', color: 'var(--color-text-tertiary)', marginTop: -6 }}>
-            No puedes asignar más de {minutos(myMinutosAsignados)} minutos — es tu propio límite.
+            La organización tiene {minutos(bolsa.sinRepartir)} min sin repartir.
           </p>
         )}
 

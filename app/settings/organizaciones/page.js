@@ -27,6 +27,9 @@ function OrganizacionesPageContent() {
   const [deletingOrg, setDeletingOrg] = useState(null);
   const [accessMsg, setAccessMsg] = useState(null);
   const [requestingAccessFor, setRequestingAccessFor] = useState(null);
+  // Bolsa de minutos por organización: { [orgId]: { bolsa, repartido, sinRepartir, utilizado } } en segundos
+  const [bolsas, setBolsas] = useState({});
+  const [editingBolsa, setEditingBolsa] = useState(null);
 
   useEffect(() => {
     load();
@@ -36,10 +39,21 @@ function OrganizacionesPageContent() {
     setLoading(true);
     setErrorMsg(null);
 
-    const [{ data: orgsData, error: orgsError }, { data: profilesData }] = await Promise.all([
+    const [{ data: orgsData, error: orgsError }, { data: profilesData }, { data: bolsasData }] = await Promise.all([
       supabase.from('organizations').select('id, name, created_at').order('name'),
       supabase.from('profiles').select('organization_id'),
+      supabase.rpc('org_minutos_resumen'),
     ]);
+    const b = {};
+    (bolsasData ?? []).forEach((r) => {
+      b[r.organization_id] = {
+        bolsa: Number(r.bolsa) || 0,
+        repartido: Number(r.repartido) || 0,
+        sinRepartir: Number(r.sin_repartir) || 0,
+        utilizado: Number(r.utilizado) || 0,
+      };
+    });
+    setBolsas(b);
 
     if (orgsError) {
       setErrorMsg(orgsError.message);
@@ -52,6 +66,20 @@ function OrganizacionesPageContent() {
       setUserCounts(counts);
     }
     setLoading(false);
+  }
+
+  async function handleSaveBolsa(org, minutosTotal) {
+    const segundos = Math.max(0, Math.round(Number(minutosTotal) || 0)) * 60;
+    const { data, error } = await supabase
+      .from('organizations')
+      .update({ minutos_bolsa_segundos: segundos })
+      .eq('id', org.id)
+      .select('id');
+    if (error) return error;
+    if (!data?.length) return { message: 'No se pudo guardar — no tienes permiso.' };
+    setEditingBolsa(null);
+    load();
+    return null;
   }
 
   async function handleSave(form) {
@@ -131,6 +159,10 @@ function OrganizacionesPageContent() {
   const columns = [
     { key: 'nombre', label: 'Nombre', render: (o) => <span style={{ fontWeight: 600 }}>{o.name}</span> },
     { key: 'usuarios', label: 'Usuarios', render: (o) => userCounts[o.id] || 0 },
+    { key: 'bolsa', label: 'Bolsa (min)', render: (o) => Math.floor((bolsas[o.id]?.bolsa || 0) / 60).toLocaleString('es') },
+    { key: 'repartido', label: 'Repartidos', render: (o) => Math.floor((bolsas[o.id]?.repartido || 0) / 60).toLocaleString('es') },
+    { key: 'sinRepartir', label: 'Sin repartir', render: (o) => Math.floor((bolsas[o.id]?.sinRepartir || 0) / 60).toLocaleString('es') },
+    { key: 'utilizado', label: 'Utilizados', render: (o) => Math.floor((bolsas[o.id]?.utilizado || 0) / 60).toLocaleString('es') },
     {
       key: 'creada',
       label: 'Creada',
@@ -146,6 +178,7 @@ function OrganizacionesPageContent() {
               label: requestingAccessFor === o.id ? 'Pidiendo acceso…' : 'Ver datos (4h)',
               onClick: () => handleRequestAccess(o),
             },
+            { label: 'Asignar minutos', onClick: () => setEditingBolsa(o) },
             { label: 'Renombrar', onClick: () => setEditingOrg(o) },
             { label: 'Eliminar', onClick: () => setDeletingOrg(o), danger: true },
           ]}
@@ -155,7 +188,7 @@ function OrganizacionesPageContent() {
   ];
 
   return (
-    <main style={{ padding: '28px 32px', maxWidth: 900, margin: '0 auto' }}>
+    <main style={{ padding: '28px 32px', maxWidth: 1100, margin: '0 auto' }}>
       <div style={{ display: 'flex', justifyContent: 'space-between', alignItems: 'flex-start', marginBottom: '1.25rem', flexWrap: 'wrap', gap: '0.75rem' }}>
         <div>
           <h1 style={{ fontSize: '1.9rem', fontWeight: 750, letterSpacing: '-0.02em' }}>Organizaciones</h1>
@@ -186,6 +219,7 @@ function OrganizacionesPageContent() {
         <a href="/settings/usuarios" style={{ color: 'var(--color-primary)' }}>Configuración → Usuarios</a>.
       </p>
 
+      <BolsaModal org={editingBolsa} resumen={editingBolsa ? bolsas[editingBolsa.id] : null} onClose={() => setEditingBolsa(null)} onSave={handleSaveBolsa} />
       <OrgModal org={editingOrg} onClose={() => setEditingOrg(null)} onSave={handleSave} />
 
       <ConfirmDeleteModal
@@ -303,6 +337,49 @@ function ConfirmDeleteModal({ org, usageCount, onClose, onConfirm }) {
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
           <Button variant="danger" onClick={handleConfirm} disabled={deleting}>{deleting ? 'Eliminando…' : 'Eliminar'}</Button>
+        </div>
+      </div>
+    </Modal>
+  );
+}
+// El dueño define el total de minutos de la organización; el admin de
+// esa organización los reparte entre su equipo (Configuración → Usuarios).
+function BolsaModal({ org, resumen, onClose, onSave }) {
+  const [valor, setValor] = useState('');
+  const [saving, setSaving] = useState(false);
+  const [error, setError] = useState(null);
+
+  useEffect(() => {
+    setValor(org ? String(Math.floor((resumen?.bolsa || 0) / 60)) : '');
+    setError(null);
+  }, [org, resumen]);
+
+  if (!org) return null;
+
+  const repartidoMin = Math.ceil((resumen?.repartido || 0) / 60);
+
+  async function handleSave() {
+    if (Number(valor) < repartidoMin) {
+      setError(`No puede ser menor a ${repartidoMin} min: ya están repartidos entre los usuarios. Quítale minutos a algún usuario primero.`);
+      return;
+    }
+    setSaving(true);
+    const err = await onSave(org, valor);
+    setSaving(false);
+    if (err) setError(err.message);
+  }
+
+  return (
+    <Modal open={!!org} onClose={onClose} title={`Minutos de ${org.name}`}>
+      <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
+        <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
+          Total de minutos que la organización puede repartir entre sus usuarios. Hoy hay {repartidoMin} min repartidos.
+        </p>
+        <Input label="Bolsa total (minutos)" type="number" min={repartidoMin} value={valor} onChange={(e) => setValor(e.target.value)} />
+        {error && <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>}
+        <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
+          <Button variant="secondary" onClick={onClose}>Cancelar</Button>
+          <Button onClick={handleSave} disabled={saving || valor === ''}>{saving ? 'Guardando…' : 'Guardar'}</Button>
         </div>
       </div>
     </Modal>
