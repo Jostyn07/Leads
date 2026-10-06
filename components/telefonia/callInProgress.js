@@ -157,12 +157,15 @@ export default function CallInProgress({ call, onClose, onSaveResult }) {
         .single();
       const disp = perfil?.minutos_disponibles_segundos;
       if (typeof disp === 'number') {
-        if (disp <= 0) {
+        // Telnyx cobra por minuto completo hacia arriba: con menos de 60 s
+        // cualquier llamada ya costaría 1 minuto entero. El tope se ajusta al
+        // último minuto completo para que el corte coincida con lo facturado.
+        if (disp < 60) {
           setErrorMsg('No tienes minutos disponibles. Pídele a tu administrador que te asigne más.');
           setPhase('error');
           return;
         }
-        setDisponibleSeg(disp);
+        setDisponibleSeg(Math.floor(disp / 60) * 60);
       }
 
       const client = await getTelnyxClient();

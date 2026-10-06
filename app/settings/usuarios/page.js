@@ -297,7 +297,9 @@ export default function UsuariosPage() {
   // Segundos que lleva en llamada este usuario (0 si no está en llamada).
   function segEnCurso(u) {
     const ini = enLlamada[u.id];
-    return ini ? Math.max(0, Math.floor((ahora - ini) / 1000)) : 0;
+    // Igual que Telnyx: minuto iniciado = minuto cobrado.
+    const s = ini ? Math.max(0, Math.floor((ahora - ini) / 1000)) : 0;
+    return s > 0 ? Math.ceil(s / 60) * 60 : 0;
   }
 
   useEffect(() => {
