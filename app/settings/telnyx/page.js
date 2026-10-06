@@ -54,6 +54,7 @@ function TelnyxCostosContent() {
   const [productos, setProductos] = useState([]); // gasto por producto (incluye lo que no es llamada)
   const [saldos, setSaldos] = useState([]); // fotos del saldo de Telnyx
   const [conc, setConc] = useState(null); // conciliación saldo vs registros
+  const [porOrg, setPorOrg] = useState([]); // costo por organización (minutos y dinero)
 
   const hasta = new Date();
   const desde = new Date(Date.now() - (dias - 1) * 86400000);
@@ -86,6 +87,8 @@ function TelnyxCostosContent() {
       supabase.rpc('telnyx_saldos', { p_desde: isoDia(desde) }),
       supabase.rpc('telnyx_conciliacion', rango),
     ]);
+    const o = await supabase.rpc('telnyx_costos_por_organizacion', rango);
+    setPorOrg(o.data ?? []);
     if (c.error) setErrorMsg(c.error.message);
     else setRows(c.data ?? []);
     setProductos(u.data ?? []);
@@ -247,6 +250,49 @@ function TelnyxCostosContent() {
     { key: 'pormin', label: '$/min', render: (l) => (l.segundos > 0 ? usd(l.total / (l.segundos / 60), 4) : '—') },
   ];
 
+  const n1 = (v) => (v == null ? '—' : Number(v).toLocaleString('es', { maximumFractionDigits: 1 }));
+  const columnasOrg = [
+    { key: 'org', label: 'Organización', render: (o) => <strong>{o.organizacion}</strong> },
+    { key: 'llamadas', label: 'Llamadas', render: (o) => n1(o.llamadas) },
+    {
+      key: 'minp',
+      label: 'Min. plataforma',
+      render: (o) => n1(o.min_plataforma),
+    },
+    {
+      key: 'mint',
+      label: 'Min. Telnyx',
+      render: (o) => {
+        const dif = o.min_plataforma != null ? Number(o.min_telnyx) - Number(o.min_plataforma) : null;
+        return (
+          <span>
+            {n1(o.min_telnyx)}
+            {dif != null && Math.abs(dif) >= 1 && (
+              <span style={{ fontSize: '0.75rem', marginLeft: 6, color: dif > 0 ? 'var(--color-danger)' : 'var(--color-text-muted)' }}>
+                ({dif > 0 ? '+' : ''}{n1(dif)})
+              </span>
+            )}
+          </span>
+        );
+      },
+    },
+    { key: 'web', label: 'WebRTC', render: (o) => usd(o.costo_webrtc, 4) },
+    { key: 'lin', label: 'Línea', render: (o) => usd(o.costo_linea, 4) },
+    { key: 'tot', label: 'Costo total', render: (o) => <strong>{usd(o.costo_total)}</strong> },
+    { key: 'pm', label: '$/min', render: (o) => (o.costo_por_minuto != null ? usd(o.costo_por_minuto, 4) : '—') },
+    {
+      key: 'saldo',
+      label: 'Bolsa · usado · disponible',
+      render: (o) =>
+        o.bolsa_min == null ? '—' : (
+          <span style={{ fontSize: '0.8rem' }}>
+            {n1(o.bolsa_min)} · {n1(o.utilizado_min)} ·{' '}
+            <strong style={{ color: Number(o.disponible_min) < 0 ? 'var(--color-danger)' : undefined }}>{n1(o.disponible_min)}</strong>
+          </span>
+        ),
+    },
+  ];
+
   const columnasUsuarios = [
     { key: 'usuario', label: 'Usuario', render: (u) => u.usuario },
     { key: 'organizacion', label: 'Organización', render: (u) => u.organizacion },
@@ -389,6 +435,14 @@ function TelnyxCostosContent() {
               </div>
             </div>
           )}
+
+          <h2 style={{ fontSize: '1.05rem', fontWeight: 650, margin: '0.5rem 0 0.2rem' }}>Costo por organización</h2>
+          <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.6rem' }}>
+            Min. plataforma = lo que se descuenta a los usuarios (minuto completo por llamada). Min. Telnyx = lo que Telnyx facturó; en rojo, minutos cobrados por Telnyx que la plataforma no registró. La bolsa es el saldo actual, no depende del rango.
+          </p>
+          <div style={{ marginBottom: '1.5rem' }}>
+            <DataTable columns={columnasOrg} rows={porOrg.map((o, i) => ({ ...o, id: o.organization_id || `sin-${i}` }))} emptyMessage="Sin datos." />
+          </div>
 
           <h2 style={{ fontSize: '1.05rem', fontWeight: 650, margin: '0.5rem 0 0.6rem' }}>Gasto por usuario</h2>
           <div style={{ marginBottom: '1.5rem' }}>
