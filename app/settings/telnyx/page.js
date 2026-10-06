@@ -53,6 +53,7 @@ function TelnyxCostosContent() {
   const [syncMsg, setSyncMsg] = useState(null);
   const [productos, setProductos] = useState([]); // gasto por producto (incluye lo que no es llamada)
   const [saldos, setSaldos] = useState([]); // fotos del saldo de Telnyx
+  const [conc, setConc] = useState(null); // conciliación saldo vs registros
 
   const hasta = new Date();
   const desde = new Date(Date.now() - (dias - 1) * 86400000);
@@ -66,22 +67,37 @@ function TelnyxCostosContent() {
     setLoading(true);
     setErrorMsg(null);
     const rango = { p_desde: isoDia(desde), p_hasta: isoDia(hasta) };
-    const [c, u, s] = await Promise.all([
-      supabase.rpc('telnyx_costos', rango),
+    // PostgREST corta cada respuesta en 1.000 filas: con ~3.000 CDR se
+    // perdía la mayoría del gasto. Se pide por páginas hasta traerlo todo.
+    async function todasLasFilas() {
+      const PAG = 1000;
+      let out = [];
+      for (let i = 0; i < 50; i++) {
+        const { data, error } = await supabase.rpc('telnyx_costos', rango).range(i * PAG, i * PAG + PAG - 1);
+        if (error) return { error };
+        out = out.concat(data ?? []);
+        if (!data || data.length < PAG) break;
+      }
+      return { data: out };
+    }
+    const [c, u, s, k] = await Promise.all([
+      todasLasFilas(),
       supabase.rpc('telnyx_uso_por_producto', rango),
       supabase.rpc('telnyx_saldos', { p_desde: isoDia(desde) }),
+      supabase.rpc('telnyx_conciliacion', rango),
     ]);
     if (c.error) setErrorMsg(c.error.message);
     else setRows(c.data ?? []);
     setProductos(u.data ?? []);
     setSaldos(s.data ?? []);
+    setConc(Array.isArray(k.data) ? k.data[0] ?? null : k.data ?? null);
     setLoading(false);
   }
 
-  async function sincronizar() {
+  async function sincronizar(completo = false) {
     setSyncing(true);
     setSyncMsg(null);
-    const { data, error } = await supabase.functions.invoke('telnyx-sync-costs', { body: { dias } });
+    const { data, error } = await supabase.functions.invoke('telnyx-sync-costs', { body: { dias, completo } });
     setSyncing(false);
     if (error || data?.error) {
       let detalle = data?.error || error?.message;
@@ -94,8 +110,12 @@ function TelnyxCostosContent() {
     }
     const total = Object.values(data.registros || {}).reduce((a, b) => a + (Number(b) || 0), 0);
     setSyncMsg({
-      tipo: data.errores?.length ? 'aviso' : 'ok',
-      texto: `Sincronizados ${total} registros de Telnyx (${data.vinculados_ahora} asociados a llamadas).` + (data.saldo != null ? ` Saldo actual: ${usd(data.saldo)}.` : '') + (data.errores?.length ? ` Avisos: ${data.errores.join(' · ')}` : ''),
+      tipo: data.errores?.length || data.incompletos?.length ? 'aviso' : 'ok',
+      texto:
+        `Sincronizados ${total} registros de Telnyx (${Object.entries(data.registros || {}).map(([t, n]) => `${t}: ${n}`).join(', ')}; ${data.vinculados_ahora} asociados a llamadas).` +
+        (data.saldo != null ? ` Saldo actual: ${usd(data.saldo)}.` : '') +
+        (data.incompletos?.length ? ` Quedó incompleto: ${data.incompletos.join(', ')} -- vuelve a sincronizar para continuar.` : '') +
+        (data.errores?.length ? ` Avisos: ${data.errores.join(' · ')}` : ''),
     });
     load();
   }
@@ -182,7 +202,13 @@ function TelnyxCostosContent() {
     if (saldos.length >= 2) {
       const primero = saldos[0];
       const ultimo = saldos[saldos.length - 1];
-      caidaSaldo = Number(primero.saldo) - Number(ultimo.saldo);
+      // Suma solo las BAJADAS entre fotos consecutivas: una recarga en
+      // medio (subida) ya no esconde el consumo (antes daba "bajó $-1.30").
+      caidaSaldo = 0;
+      for (let i = 1; i < saldos.length; i++) {
+        const d = Number(saldos[i - 1].saldo) - Number(saldos[i].saldo);
+        if (d > 0) caidaSaldo += d;
+      }
       const llamadasIntervalo = rows
         .filter((r) => r.started_at >= primero.tomado_at && r.started_at <= ultimo.tomado_at)
         .reduce((a, r) => a + (Number(r.costo) || 0), 0);
@@ -245,7 +271,10 @@ function TelnyxCostosContent() {
               <option key={r.dias} value={r.dias}>{r.label}</option>
             ))}
           </select>
-          <Button onClick={sincronizar} disabled={syncing}>{syncing ? 'Sincronizando…' : 'Sincronizar con Telnyx'}</Button>
+          <Button onClick={() => sincronizar(false)} disabled={syncing}>{syncing ? 'Sincronizando…' : 'Sincronizar con Telnyx'}</Button>
+          <Button variant="secondary" onClick={() => sincronizar(true)} disabled={syncing} title="Vuelve a descargar todos los registros del rango">
+            Resincronizar todo
+          </Button>
         </div>
       </div>
 
@@ -342,6 +371,24 @@ function TelnyxCostosContent() {
               )}
             </div>
           </div>
+
+          {conc && conc.fotos >= 2 && (
+            <div className="card" style={{ padding: '1rem', marginBottom: '1.25rem' }}>
+              <h3 style={{ fontSize: '0.95rem', fontWeight: 650, marginBottom: 4 }}>Conciliación: saldo vs. registros</h3>
+              <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.75rem' }}>
+                Entre la primera y la última sincronización del rango. Si “Sin explicar” es alto, faltan registros por traer (resincroniza) o son cargos fuera de llamadas.
+              </p>
+              <div style={{ display: 'grid', gridTemplateColumns: 'repeat(auto-fit, minmax(150px, 1fr))', gap: '0.6rem' }}>
+                <Kpi label="Saldo inicial" value={usd(conc.saldo_inicial)} />
+                <Kpi label="Recargas" value={usd(conc.recargas)} />
+                <Kpi label="Consumo real (bajó el saldo)" value={usd(conc.consumo_saldo)} />
+                <Kpi label="Saldo final" value={usd(conc.saldo_final)} />
+                <Kpi label="Llamadas registradas" value={usd(conc.gasto_cdr)} sub={`WebRTC ${usd(conc.gasto_cdr_webrtc)} · Línea ${usd(conc.gasto_cdr_linea)}`} />
+                <Kpi label="Reporte por producto" value={usd(conc.gasto_productos)} />
+                <Kpi label="Sin explicar" value={usd(conc.sin_explicar)} />
+              </div>
+            </div>
+          )}
 
           <h2 style={{ fontSize: '1.05rem', fontWeight: 650, margin: '0.5rem 0 0.6rem' }}>Gasto por usuario</h2>
           <div style={{ marginBottom: '1.5rem' }}>
