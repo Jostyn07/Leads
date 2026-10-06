@@ -217,19 +217,37 @@ export default function LlamadasPage() {
     // Una sola consulta liviana (sin range) para calcular minutos
     // utilizados, duración promedio y grabaciones sobre TODO lo que
     // matchea los filtros actuales — no solo la página visible.
-    let query = supabase.from('calls').select('duracion_segundos, call_recordings ( disponible )');
-    query = applyFilters(query);
-    const { data } = await query;
-    const rows = data ?? [];
+    //
+    // Supabase devuelve máximo 1.000 filas por consulta: por eso salía
+    // "1000 llamadas" y minutos de menos. Se pide por páginas hasta traerlo todo.
+    const PAG = 1000;
+    let rows = [];
+    for (let i = 0; i < 200; i++) {
+      let query = supabase.from('calls').select('id, duracion_segundos, call_recordings ( disponible )');
+      query = applyFilters(query)
+        .order('created_at', { ascending: false })
+        .order('id', { ascending: true })
+        .range(i * PAG, i * PAG + PAG - 1);
+      const { data, error } = await query;
+      if (error) break;
+      rows = rows.concat(data ?? []);
+      if (!data || data.length < PAG) break;
+    }
 
     const conectadas = rows.filter((r) => (r.duracion_segundos || 0) > 0);
-    const minutosUtilizados = minutos(rows.reduce((sum, r) => sum + (r.duracion_segundos || 0), 0));
+    // Misma regla que Telnyx: cada llamada se cobra por minuto completo hacia
+    // arriba (5 s = 1 min, 61 s = 2 min). Ya viene en minutos enteros.
+    const minutosUtilizados = rows.reduce((sum, r) => {
+      const s = r.duracion_segundos || 0;
+      return sum + (s > 0 ? Math.ceil(s / 60) : 0);
+    }, 0);
     const duracionPromedioSeg = conectadas.length
       ? Math.round(conectadas.reduce((sum, r) => sum + r.duracion_segundos, 0) / conectadas.length)
       : 0;
+    // Una llamada puede tener varias partes grabadas: cuenta llamadas con grabación.
     const grabaciones = rows.filter((r) => {
-      const rec = Array.isArray(r.call_recordings) ? r.call_recordings[0] : r.call_recordings;
-      return rec?.disponible;
+      const recs = Array.isArray(r.call_recordings) ? r.call_recordings : r.call_recordings ? [r.call_recordings] : [];
+      return recs.some((rec) => rec?.disponible);
     }).length;
 
     const targetUserId = canSeeAll ? filterUsuario : currentUserId;
