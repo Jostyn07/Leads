@@ -162,7 +162,6 @@ function OrganizacionesPageContent() {
     { key: 'bolsa', label: 'Bolsa (min)', render: (o) => Math.floor((bolsas[o.id]?.bolsa || 0) / 60).toLocaleString('es') },
     { key: 'repartido', label: 'Repartidos', render: (o) => Math.floor((bolsas[o.id]?.repartido || 0) / 60).toLocaleString('es') },
     { key: 'sinRepartir', label: 'Sin repartir', render: (o) => Math.floor((bolsas[o.id]?.sinRepartir || 0) / 60).toLocaleString('es') },
-    { key: 'utilizado', label: 'Utilizados', render: (o) => Math.floor((bolsas[o.id]?.utilizado || 0) / 60).toLocaleString('es') },
     {
       key: 'creada',
       label: 'Creada',
@@ -373,7 +372,7 @@ function BolsaModal({ org, resumen, onClose, onSave }) {
     <Modal open={!!org} onClose={onClose} title={`Minutos de ${org.name}`}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-          Total de minutos que la organización puede repartir entre sus usuarios. Hoy hay {repartidoMin} min repartidos.
+          Minutos que le quedan a la organización (los que sus usuarios ya consumieron se descuentan solos). Hoy hay {repartidoMin} min en el saldo de sus usuarios.
         </p>
         <Input label="Bolsa total (minutos)" type="number" min={repartidoMin} value={valor} onChange={(e) => setValor(e.target.value)} />
         {error && <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>}

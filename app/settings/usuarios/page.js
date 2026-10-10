@@ -448,26 +448,15 @@ export default function UsuariosPage() {
         </span>
       ),
     },
-    { key: 'asignados', label: 'Min. asignados', render: (u) => minutos(u.minutos_asignados_segundos) },
-    // Utilizados y disponibles incluyen, en vivo, la llamada en curso.
-    { key: 'utilizados', label: 'Min. utilizados', render: (u) => minutos((u.minutos_utilizados_segundos || 0) + segEnCurso(u)) },
+    // Saldo de minutos: cada llamada se lo va descontando (minuto completo,
+    // como cobra Telnyx). Ya no se muestra "asignados" ni "utilizados".
+    // Durante una llamada en curso baja en vivo; nunca baja de 0.
     {
-      key: 'disponibles',
-      label: 'Min. disponibles',
+      key: 'minutos',
+      label: 'Minutos',
       render: (u) => {
-        const asignados = minutos(u.minutos_asignados_segundos);
-        const enCurso = segEnCurso(u);
-        const utilizados = minutos((u.minutos_utilizados_segundos || 0) + enCurso);
-        const disponibles = minutos((u.minutos_disponibles_segundos || 0) - enCurso);
-        const pct = asignados > 0 ? Math.min(100, (utilizados / asignados) * 100) : 0;
-        return (
-          <div style={{ display: 'flex', alignItems: 'center', gap: 8, minWidth: 120 }}>
-            <div className="progress-track">
-              <div className="progress-fill" style={{ width: `${pct}%` }} />
-            </div>
-            <span style={{ fontSize: '0.82rem', flexShrink: 0 }}>{disponibles}</span>
-          </div>
-        );
+        const saldo = Math.max(0, (u.minutos_asignados_segundos || 0) - segEnCurso(u));
+        return <strong style={{ color: saldo < 60 ? 'var(--color-danger)' : undefined }}>{Math.floor(saldo / 60).toLocaleString('es')}</strong>;
       },
     },
     {
@@ -576,7 +565,7 @@ export default function UsuariosPage() {
               label="Min. sin repartir / bolsa de la organización"
             />
           ) : (
-            <StatCard icon="⏱️" value={stats.minutosAsignados.toLocaleString('es')} label="Minutos asignados" />
+            <StatCard icon="⏱️" value={stats.minutosAsignados.toLocaleString('es')} label="Minutos en saldo de los usuarios" />
           )}
         </div>
       )}
@@ -879,7 +868,7 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
         </label>
 
         <Input
-          label="Minutos asignados"
+          label="Minutos (saldo)"
           type="number"
           min={0}
           max={topeMinSeg != null ? minutos(topeMinSeg) : undefined}
@@ -892,7 +881,7 @@ function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, 
             {minutosLocked
               ? 'No se pudo cargar la bolsa de la organización; recarga la página.'
               : topeMinSeg != null
-                ? `Máximo ${minutos(topeMinSeg)} min para este usuario (la organización tiene ${minutos(bolsa.sinRepartir)} min sin repartir).`
+                ? `Es el saldo que le queda. Máximo ${minutos(topeMinSeg)} min (la organización tiene ${minutos(bolsa.sinRepartir)} min sin repartir). Si lo bajas, la diferencia vuelve a la bolsa; lo ya consumido no se puede recuperar.`
                 : ''}
           </p>
         )}
@@ -953,7 +942,7 @@ function AddMinutesModal({ user, onClose, onSave, bolsa }) {
     <Modal open={!!user} onClose={onClose} title={`Agregar minutos a ${user.full_name || 'usuario'}`}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-          Actualmente tiene {minutos(user.minutos_asignados_segundos)} minutos asignados. Este valor se suma a lo que ya tiene.
+          Actualmente le quedan {Math.floor((user.minutos_asignados_segundos || 0) / 60)} minutos. Este valor se suma a lo que le queda.
         </p>
         {bolsa && (
           <p style={{ fontSize: '0.82rem', color: 'var(--color-text-tertiary)' }}>
