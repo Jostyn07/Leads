@@ -223,8 +223,12 @@ export default function UsuariosPage() {
       setBolsa(null);
       return;
     }
-    const r = data[0];
-    setBolsa({ total: Number(r.bolsa) || 0, repartido: Number(r.repartido) || 0, sinRepartir: Number(r.sin_repartir) || 0 });
+    // Para el owner, org_minutos_resumen devuelve TODAS las organizaciones;
+    // antes se tomaba data[0] (una cualquiera) y por eso la tarjeta no
+    // reflejaba los minutos recién agregados a otra organización.
+    // Owner: suma de todas. Admin: solo devuelve la suya.
+    const suma = (k) => data.reduce((a, r) => a + (Number(r[k]) || 0), 0);
+    setBolsa({ total: suma('bolsa'), repartido: suma('repartido'), sinRepartir: suma('sin_repartir'), todas: data.length > 1 });
   }
 
   // ------------------------------------------------------------------
@@ -562,7 +566,7 @@ export default function UsuariosPage() {
             <StatCard
               icon="⏱️"
               value={`${minutos(bolsa.sinRepartir).toLocaleString('es')} / ${minutos(bolsa.total).toLocaleString('es')}`}
-              label="Min. sin repartir / bolsa de la organización"
+              label={bolsa.todas ? 'Min. sin repartir / bolsa (todas las organizaciones)' : 'Min. sin repartir / bolsa de la organización'}
             />
           ) : (
             <StatCard icon="⏱️" value={stats.minutosAsignados.toLocaleString('es')} label="Minutos en saldo de los usuarios" />
@@ -694,7 +698,7 @@ function StatCard({ icon, value, label, color }) {
 
 function EditUserModal({ user, templates, organizations, phoneNumbers, isOwner, currentUserId, myNumberIds, myMinutosAsignados, bolsa, onClose, onSave, onSaved }) {
   // Tope de minutos para ESTE usuario = lo que ya tiene + lo sin repartir.
-  const topeMinSeg = bolsa ? bolsa.sinRepartir + (user?.minutos_asignados_segundos || 0) : null;
+  const topeMinSeg = !isOwner && bolsa ? bolsa.sinRepartir + (user?.minutos_asignados_segundos || 0) : null;
   const [form, setForm] = useState(null);
   const [selectedNumeroIds, setSelectedNumeroIds] = useState(new Set());
   const [saving, setSaving] = useState(false);
