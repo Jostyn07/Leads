@@ -68,13 +68,12 @@ function OrganizacionesPageContent() {
     setLoading(false);
   }
 
-  async function handleSaveBolsa(org, minutosTotal) {
-    // Pasa por una función de la base (valida que seas owner y que la
-    // bolsa no quede por debajo de lo ya repartido): la tabla
-    // organizations no admite UPDATE directo desde el cliente.
-    const { error } = await supabase.rpc('set_org_minutos_bolsa', {
+  async function handleSaveBolsa(org, minutosAgregar) {
+    // Suma minutos a la bolsa (no reemplaza el total). Lo hace una función
+    // de la base que valida que seas owner y suma en segundos.
+    const { error } = await supabase.rpc('agregar_org_minutos', {
       p_org: org.id,
-      p_minutos: Math.max(0, Math.round(Number(minutosTotal) || 0)),
+      p_minutos: Math.max(0, Math.round(Number(minutosAgregar) || 0)),
     });
     if (error) return error;
     setEditingBolsa(null);
@@ -341,44 +340,51 @@ function ConfirmDeleteModal({ org, usageCount, onClose, onConfirm }) {
     </Modal>
   );
 }
-// El dueño define el total de minutos de la organización; el admin de
-// esa organización los reparte entre su equipo (Configuración → Usuarios).
+// El dueño SUMA minutos a la organización; el admin de esa organización
+// los reparte entre su equipo (Configuración → Usuarios).
 function BolsaModal({ org, resumen, onClose, onSave }) {
   const [valor, setValor] = useState('');
   const [saving, setSaving] = useState(false);
   const [error, setError] = useState(null);
 
   useEffect(() => {
-    setValor(org ? String(Math.floor((resumen?.bolsa || 0) / 60)) : '');
+    setValor('');
     setError(null);
-  }, [org, resumen]);
+  }, [org]);
 
   if (!org) return null;
 
-  const repartidoMin = Math.ceil((resumen?.repartido || 0) / 60);
+  const bolsaMin = Math.floor((resumen?.bolsa || 0) / 60);
+  const sinRepartirMin = Math.floor((resumen?.sinRepartir || 0) / 60);
+  const agregar = Math.round(Number(valor) || 0);
 
   async function handleSave() {
-    if (Number(valor) < repartidoMin) {
-      setError(`No puede ser menor a ${repartidoMin} min: ya están repartidos entre los usuarios. Quítale minutos a algún usuario primero.`);
+    if (agregar <= 0) {
+      setError('Indica cuántos minutos quieres agregar (mayor a 0).');
       return;
     }
     setSaving(true);
-    const err = await onSave(org, valor);
+    const err = await onSave(org, agregar);
     setSaving(false);
     if (err) setError(err.message);
   }
 
   return (
-    <Modal open={!!org} onClose={onClose} title={`Minutos de ${org.name}`}>
+    <Modal open={!!org} onClose={onClose} title={`Agregar minutos a ${org.name}`}>
       <div style={{ display: 'flex', flexDirection: 'column', gap: '0.75rem' }}>
         <p style={{ fontSize: '0.85rem', color: 'var(--color-text-muted)' }}>
-          Minutos que le quedan a la organización (los que sus usuarios ya consumieron se descuentan solos). Hoy hay {repartidoMin} min en el saldo de sus usuarios.
+          Hoy la organización tiene {bolsaMin.toLocaleString('es')} min ({sinRepartirMin.toLocaleString('es')} sin repartir). Lo que escribas se suma; luego el admin los reparte entre su equipo.
         </p>
-        <Input label="Bolsa total (minutos)" type="number" min={repartidoMin} value={valor} onChange={(e) => setValor(e.target.value)} />
+        <Input label="Minutos a agregar" type="number" min={1} value={valor} onChange={(e) => setValor(e.target.value)} />
+        {agregar > 0 && (
+          <p style={{ fontSize: '0.82rem', color: 'var(--color-text-tertiary)', marginTop: -6 }}>
+            Quedará con {(bolsaMin + agregar).toLocaleString('es')} min · {(sinRepartirMin + agregar).toLocaleString('es')} sin repartir.
+          </p>
+        )}
         {error && <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem' }}>{error}</p>}
         <div style={{ display: 'flex', gap: '0.5rem', justifyContent: 'flex-end', marginTop: 4 }}>
           <Button variant="secondary" onClick={onClose}>Cancelar</Button>
-          <Button onClick={handleSave} disabled={saving || valor === ''}>{saving ? 'Guardando…' : 'Guardar'}</Button>
+          <Button onClick={handleSave} disabled={saving || agregar <= 0}>{saving ? 'Guardando…' : 'Agregar'}</Button>
         </div>
       </div>
     </Modal>
