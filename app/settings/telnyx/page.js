@@ -54,7 +54,8 @@ function TelnyxCostosContent() {
   const [productos, setProductos] = useState([]); // gasto por producto (incluye lo que no es llamada)
   const [saldos, setSaldos] = useState([]); // fotos del saldo de Telnyx
   const [conc, setConc] = useState(null); // conciliación saldo vs registros
-  const [porOrg, setPorOrg] = useState([]); // costo por organización (minutos y dinero)
+  const [porOrg, setPorOrg] = useState([]);
+  const [porOrgError, setPorOrgError] = useState(null); // costo por organización (minutos y dinero)
 
   const hasta = new Date();
   const desde = new Date(Date.now() - (dias - 1) * 86400000);
@@ -89,6 +90,7 @@ function TelnyxCostosContent() {
     ]);
     const o = await supabase.rpc('telnyx_costos_por_organizacion', rango);
     setPorOrg(o.data ?? []);
+    setPorOrgError(o.error ? o.error.message : null);
     if (c.error) setErrorMsg(c.error.message);
     else setRows(c.data ?? []);
     setProductos(u.data ?? []);
@@ -282,12 +284,11 @@ function TelnyxCostosContent() {
     { key: 'pm', label: '$/min', render: (o) => (o.costo_por_minuto != null ? usd(o.costo_por_minuto, 4) : '—') },
     {
       key: 'saldo',
-      label: 'Bolsa · usado · disponible',
+      label: 'Disponibles · en usuarios · sin repartir',
       render: (o) =>
         o.bolsa_min == null ? '—' : (
           <span style={{ fontSize: '0.8rem' }}>
-            {n1(o.bolsa_min)} · {n1(o.utilizado_min)} ·{' '}
-            <strong style={{ color: Number(o.disponible_min) < 0 ? 'var(--color-danger)' : undefined }}>{n1(o.disponible_min)}</strong>
+            <strong>{n1(o.bolsa_min)}</strong> · {n1(o.repartido_min)} · {n1(o.disponible_min)}
           </span>
         ),
     },
@@ -438,9 +439,14 @@ function TelnyxCostosContent() {
 
           <h2 style={{ fontSize: '1.05rem', fontWeight: 650, margin: '0.5rem 0 0.2rem' }}>Costo por organización</h2>
           <p style={{ fontSize: '0.78rem', color: 'var(--color-text-muted)', marginBottom: '0.6rem' }}>
-            Min. plataforma = lo que se descuenta a los usuarios (minuto completo por llamada). Min. Telnyx = lo que Telnyx facturó; en rojo, minutos cobrados por Telnyx que la plataforma no registró. La bolsa es el saldo actual, no depende del rango.
+            Min. plataforma = lo que se descuenta a los usuarios (minuto completo por llamada). Min. Telnyx = lo que Telnyx facturó; en rojo, minutos cobrados por Telnyx que la plataforma no registró. Disponibles / en usuarios / sin repartir son el saldo actual, no dependen del rango.
           </p>
           <div style={{ marginBottom: '1.5rem' }}>
+            {porOrgError && (
+              <p style={{ color: 'var(--color-danger)', fontSize: '0.85rem', marginBottom: 6 }}>
+                No se pudo cargar el costo por organización: {porOrgError}
+              </p>
+            )}
             <DataTable columns={columnasOrg} rows={porOrg.map((o, i) => ({ ...o, id: o.organization_id || `sin-${i}` }))} emptyMessage="Sin datos." />
           </div>
 
